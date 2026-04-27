@@ -38,9 +38,11 @@
 #include <h/graphics.h>
 #include <h/text.h>
 #include <h/unix.h>
+#include <h/charwidth.h>
 
 static Int		getMarginWidthEditor(Editor);
 static Int		getColumnEditor(Editor, Int);
+static Int		getVisualColumnEditor(Editor);
 static Int		getLineNumberEditor(Editor, Int);
 static Int		getLengthEditor(Editor);
 static Int		normalise_index(Editor, Int);
@@ -4610,14 +4612,21 @@ getColumnEditor(Editor e, Int where)
 
   sol = valInt(getScanTextBuffer(tb, where, NAME_line, 0, NAME_start));
   for(col = 0; sol < valInt(where); sol++ )
-  { if ( fetch_textbuffer(tb, sol) == '\t' )
+  { wint_t c = fetch_textbuffer(tb, sol);
+    if ( c == '\t' )
     { col++;
       col = Round(col, valInt(e->tab_distance));
     } else
-      col++;
+      col += uchar_display_width(c);
   }
 
   answer(toInt(col));
+}
+
+
+static Int
+getVisualColumnEditor(Editor e)
+{ return getColumnEditor(e, DEFAULT);
 }
 
 
@@ -4633,19 +4642,26 @@ getColumnLocationEditor(Editor e, Int c, Int from)
     from = e->caret;
   pos = valInt(getScanTextBuffer(tb, from, NAME_line, 0, NAME_start));
 
-  for(col = 0; col < dcol && pos < size; pos++)
-  { switch( fetch_textbuffer(tb, pos) )
+  for(col = 0; col < dcol && pos < size; )
+  { wint_t ch = fetch_textbuffer(tb, pos);
+    switch(ch)
     { case '\n':
 	return toInt(pos);
       case '\t':
 	col++;
 	col = Round(col, valInt(e->tab_distance));
+	pos++;
 	break;
       default:
-	col++;
+      { int w = uchar_display_width(ch);
+	if ( col + w > dcol )		/* would overshoot wide char boundary */
+	  goto done;
+	col += w;
+	pos++;
+      }
     }
   }
-
+done:
   answer(toInt(pos));
 }
 
@@ -5460,6 +5476,8 @@ static getdecl get_editor[] =
      NAME_area, "Width in character units"),
   GM(NAME_column, 1, "column=0..", "index=[int]", getColumnEditor,
      NAME_caret, "Column point is at"),
+  GM(NAME_visualColumn, 0, "column=0..", NULL, getVisualColumnEditor,
+     NAME_caret, "Visual column of caret (0-based; CJK=2, combining=0)"),
   GM(NAME_upDownColumn, 0, "column=int", NULL, getUpDownColumnEditor,
      NAME_caret, "Saved X-infor for ->cursor_up/->cursor_down"),
   GM(NAME_indentation, 2, "column=int", T_indentation, getIndentationEditor,
