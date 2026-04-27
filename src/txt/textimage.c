@@ -496,12 +496,16 @@ do_fill_line(TextImage ti, TextLine l, long index)
 	    last_is_space = TRUE;
 	    break;
 	  default:
-	    x += c_width((wint_t)tc->value.c, tc->font);
-	    current_vcol += uchar_display_width((wint_t)tc->value.c);
-	    if ( last_is_space )
-	      last_break = i;
-	    last_is_space = FALSE;
+	  { int dw = uchar_display_width((wint_t)tc->value.c);
+	    if ( dw != 0 )	/* combining/zero-width: don't advance x */
+	    { x += c_width((wint_t)tc->value.c, tc->font);
+	      if ( last_is_space )
+		last_break = i;
+	      last_is_space = FALSE;
+	    }
+	    current_vcol += dw;
 	    break;
+	  }
 	}
 	break;
       case CHAR_GRAPHICAL:
@@ -1024,6 +1028,14 @@ paint_line(TextImage ti, Area a, TextLine l, int from, int to)
 
 #define SWAP_COLORS(a,b) do { Any _tmp = a; a = b; b = _tmp; } while(0)
 
+    /* For text runs: use Pango to measure the exact advance of the run
+     * for the fill rectangle (avoids over-wide highlight for complex
+     * scripts).  For non-text (tab, newline) use the stored x
+     * difference, which is exact. */
+    int sx = (int)l->chars[s].x;
+    int run_tw = prt ? (int)str_advance_W(buf, (int)(out-buf), f)
+		     : (int)l->chars[e].x - sx;
+
     if ( atts & TXT_GREYED )
     { if ( isDefault(c) )
 	c = r_colour(DEFAULT);
@@ -1046,8 +1058,8 @@ paint_line(TextImage ti, Area a, TextLine l, int from, int to)
 	  SWAP_COLORS(c, bg);
 	r_3d_box(x, l->y, tx-x, l->h, 0, bg, TRUE);
       } else
-      { int x  = l->chars[s].x;
-	int tx = l->chars[e].x;
+      { int x  = sx;
+	int tx = x + run_tw;
 
 	if ( tx > rmargin ) tx = rmargin;
 	if ( atts & TXT_HIGHLIGHTED )
@@ -1055,22 +1067,49 @@ paint_line(TextImage ti, Area a, TextLine l, int from, int to)
 	r_fill(x, l->y, tx-x, l->h, bg);
       }
     } else if ( atts & TXT_HIGHLIGHTED )
-    { int x  = l->chars[s].x;
-      int tx = l->chars[e].x;
+    { int x  = sx;
+      int tx = x + run_tw;
+      if ( tx > rmargin ) tx = rmargin;
       bg = r_background(DEFAULT);
       SWAP_COLORS(c, bg);
       r_fill(x, l->y, tx-x, l->h, bg);
     }
 
     if ( prt )
-    { size_t len = out-buf;
+    { r_colour(c);
+      /* Render per grapheme cluster so that each wide character (CJK,
+       * emoji) starts at its stored x position.  Pango's advance for a
+       * wide glyph can exceed the c_width() value by a pixel or two;
+       * rendering a long same-attributes run as one call lets that error
+       * accumulate, causing visual drift.  Non-wide runs are batched as
+       * before (one call per consecutive sequence of width-1/0 chars). */
+      { int   ci  = s;
+	charW *bp  = buf;
+	int    ty  = l->y + l->base;
 
-      r_colour(c);
-      s_printW(buf, len, l->chars[s].x, l->y + l->base, f);
+	while ( ci < e )
+	{ charW *sub = bp;
+	  int    sub_x = (int)l->chars[ci].x;
+	  int    dw = uchar_display_width((wint_t)*bp);
+
+	  if ( dw == 2 )
+	  { /* Wide cluster: base glyph + any following combiners. */
+	    bp++; ci++;
+	    while ( ci < e && uchar_display_width((wint_t)*bp) == 0 )
+	    { bp++; ci++; }
+	  } else
+	  { /* Non-wide batch: consume until a wide char or end of run. */
+	    do { bp++; ci++; }
+	    while ( ci < e && uchar_display_width((wint_t)*bp) != 2 );
+	  }
+	  s_printW(sub, (int)(bp-sub), sub_x, ty, f);
+	}
+      }
 
       if ( atts & TXT_BOLDEN )
-      { s_printW(buf, len, l->chars[s].x+1, l->y   + l->base, f);
-	s_printW(buf, len, l->chars[s].x,   l->y-1 + l->base, f);
+      { size_t blen = (size_t)(out-buf);
+	s_printW(buf, blen, sx+1, l->y   + l->base, f);
+	s_printW(buf, blen, sx,   l->y-1 + l->base, f);
       }
     }
 
@@ -1566,10 +1605,7 @@ computeTextImage(TextImage ti)
 	} else
 	  ty = cy;
 
-	if ( ml->changed == 0 )
-	  cx = TXT_X_MARGIN;
-	else
-	  cx = ml->chars[ml->changed].x;
+	cx = TXT_X_MARGIN;		/* always repaint from left margin */
 	if ( cx < fx )
 	  fx = cx;
 

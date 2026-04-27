@@ -2038,6 +2038,22 @@ str_advance_utf8(const char *u, int ulen, FontObj font)
   return 0.0;
 }
 
+/** Advance width of a charW buffer, measured as a Pango run.
+ *
+ * Unlike summing c_width() per character, this asks Pango to measure
+ * the complete sequence, so font-fallback substitution and any GPOS
+ * kerning adjustments are included.  Used by paint_line to size the
+ * highlight fill rectangle correctly.
+ */
+double
+str_advance_W(charW *s, int l, FontObj font)
+{ if ( l <= 0 )
+    return 0.0;
+  string str = { .text_union = { .textW = s },
+                 .hdr.f = { .size = l, .iswide = true, .readonly = true } };
+  return str_advance(&str, 0, l, font);
+}
+
 /**
  * Retrieve the width of a specific character in a font.
  *
