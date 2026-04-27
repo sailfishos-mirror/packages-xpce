@@ -4261,6 +4261,23 @@ selectionExtendEditor(Editor e, Int where)
 #undef WordKind
 #undef LineKind
 
+  /* Snap endpoints to grapheme-cluster boundaries so that a base
+   * character and its following combining mark(s) are never split
+   * between selected and unselected.  A combining mark has zero
+   * display width (uchar_display_width() == 0).
+   *
+   *  - from: retract while the character AT from is a combiner
+   *    (we would be starting the selection mid-cluster).
+   *  - to: advance while the character AT to is a combiner
+   *    (we would be ending the selection mid-cluster).
+   */
+  { int size = e->text_buffer->size;
+    while ( from > 0 && uchar_display_width(Fetch(e, from)) == 0 )
+      from--;
+    while ( to < size && uchar_display_width(Fetch(e, to)) == 0 )
+      to++;
+  }
+
   if ( valInt(where) < valInt(e->selection_origin) ) /* swap */
   { int tmp = from;
     from = to;
