@@ -36,6 +36,7 @@
 #include <h/kernel.h>
 #include <h/graphics.h>
 #include <h/text.h>
+#include <h/charwidth.h>
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 The PCE-3 editor object is now split up into a large number of  separate
@@ -435,6 +436,7 @@ do_fill_line(TextImage ti, TextLine l, long index)
   TextChar tc;
   float x;
   int i, left_margin, right_margin;
+  int current_vcol = 0;
   long start;
 
   l->ends_because = 0;
@@ -461,6 +463,7 @@ do_fill_line(TextImage ti, TextLine l, long index)
     index = (*ti->fetch)(ti->text, tc);
     tc->index -= start;
     tc->x = x;
+    tc->vcol = (short)current_vcol;
 
     switch(tc->type)
     { case CHAR_ASCII:
@@ -479,18 +482,22 @@ do_fill_line(TextImage ti, TextLine l, long index)
 	    ensure_chars_line(l, i+1);
 	    tc = &l->chars[i];
 	    tc->x = x;
+	    tc->vcol = (short)current_vcol;
 	    fill_dimensions_line(l);
 	    return index;
 	  case '\t':
 	    x = tab(ti, x);
+	    current_vcol++;		/* count tab as one column step */
 	    last_is_space = TRUE;
 	    break;
 	  case ' ':
 	    x += c_width((wint_t)tc->value.c, tc->font);
+	    current_vcol++;
 	    last_is_space = TRUE;
 	    break;
 	  default:
 	    x += c_width((wint_t)tc->value.c, tc->font);
+	    current_vcol += uchar_display_width((wint_t)tc->value.c);
 	    if ( last_is_space )
 	      last_break = i;
 	    last_is_space = FALSE;
@@ -501,12 +508,14 @@ do_fill_line(TextImage ti, TextLine l, long index)
 	ComputeGraphical(tc->value.graphical);
 
 	x += valInt(tc->value.graphical->area->w);
+	current_vcol++;
 	if ( last_is_space )
 	  last_break = i;
 	last_is_space = FALSE;
 	break;
       case CHAR_IMAGE:
 	x += valInt(tc->value.image->size->w);
+	current_vcol++;
 	if ( last_is_space )
 	  last_break = i;
 	last_is_space = FALSE;

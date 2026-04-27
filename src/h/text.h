@@ -239,6 +239,7 @@ struct text_char
   Any		underline;		/* Underline style (bool|colour*) */
   intptr_t	index;			/* Index in line (relative) */
   float		x;			/* X-position in line (pixels) */
+  short		vcol;			/* Visual column (0-based); 0 for combiners */
   unsigned char attributes;		/* Its attributes */
   unsigned	type : 2;		/* type of character */
 };
