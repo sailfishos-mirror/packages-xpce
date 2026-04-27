@@ -890,7 +890,7 @@ static void
 paint_line(TextImage ti, Area a, TextLine l, int from, int to)
 { charW buf[1000];
   charW *out;
-  int s = from, e;
+  int s, e;
   FontObj f;
   Colour c;
   Any bg;
@@ -902,6 +902,27 @@ paint_line(TextImage ti, Area a, TextLine l, int from, int to)
 
   DEBUG(NAME_text, Cprintf("painting line %p from %d to %d\n",
 			   l, from, to));
+
+  /* Snap from/to to grapheme cluster boundaries.
+   *
+   * A zero-advance character (Thai vowel signs, NFD combining marks, …)
+   * at index i satisfies chars[i+1].x == chars[i].x: the next character
+   * starts at the same pixel column because this one has zero advance.
+   *
+   * Splitting such a cluster across paint_line calls is fatal: Pango
+   * receives base character and combining mark in separate s_printW
+   * calls and renders them as independent glyphs at wrong positions,
+   * causing the "upset" visible when a selection boundary falls inside
+   * a cluster (e.g. while dragging through Thai สวัสดีชาวโลก).
+   *
+   * Fix: extend `from` backward to the start of any cluster it points
+   * into, and extend `to` forward to include any combining marks that
+   * trail the last character in range.  Both accesses to chars[i+1] are
+   * safe: chars[l->length] is always a valid sentinel entry. */
+  while ( from > 0 && l->chars[from+1].x == l->chars[from].x )
+    from--;
+  while ( to < l->length && l->chars[to+1].x == l->chars[to].x )
+    to++;
 
   cx = (from == 0 ? pen : l->chars[from].x);
   cw = (to >= l->length ? rmargin : l->chars[to].x) - cx;
@@ -978,7 +999,17 @@ paint_line(TextImage ti, Area a, TextLine l, int from, int to)
     { prt = true;
 
       for(e++; e < to; e++)
-      { if ( l->chars[e].font != f ||
+      { /* Never split a grapheme cluster: a zero-advance character must
+	 * stay in the same Pango run as its base.  Belt-and-suspenders
+	 * guard for any cluster not caught by the from/to snapping above. */
+	if ( l->chars[e].type == CHAR_ASCII &&
+	     e < l->length &&
+	     l->chars[e+1].x == l->chars[e].x )
+	{ PutBuf(l->chars[e].value.c);
+	  continue;
+	}
+
+	if ( l->chars[e].font != f ||
 	     l->chars[e].colour != c ||
 	     l->chars[e].background != bg ||
 	     l->chars[e].attributes != atts ||
