@@ -1802,15 +1802,52 @@ markStatusEditor(Editor e, Name status)
 }
 
 
+/* Return the buffer index just past the grapheme cluster starting at pos.
+ * A cluster is one base code point plus any immediately following
+ * zero-display-width combining marks. */
+static intptr_t
+grapheme_cluster_end(TextBuffer tb, intptr_t pos)
+{ intptr_t size = tb->size;
+  if ( pos >= size )
+    return pos;
+  pos++;					/* skip base code point */
+  while ( pos < size &&
+	  uchar_display_width((uchar_t)fetch_textbuffer(tb, pos)) == 0 )
+    pos++;
+  return pos;
+}
+
+/* Return the buffer index of the start of the grapheme cluster whose
+ * last code point is at pos-1 (i.e. the cluster ending just before pos). */
+static intptr_t
+grapheme_cluster_start(TextBuffer tb, intptr_t pos)
+{ if ( pos <= 0 )
+    return 0;
+  pos--;					/* step onto last code point */
+  while ( pos > 0 &&
+	  uchar_display_width((uchar_t)fetch_textbuffer(tb, pos)) == 0 )
+    pos--;					/* skip back over combining marks */
+  return pos;
+}
+
+
 static status
 forwardCharEditor(Editor e, Int arg)
-{ return CaretEditor(e, toInt(Caret(e) + UArg(arg)));
+{ intptr_t pos = Caret(e);
+  intptr_t n   = UArg(arg);
+  while ( n-- > 0 )
+    pos = grapheme_cluster_end(e->text_buffer, pos);
+  return CaretEditor(e, toInt(pos));
 }
 
 
 static status
 backwardCharEditor(Editor e, Int arg)
-{ return CaretEditor(e, toInt(Caret(e) - UArg(arg)));
+{ intptr_t pos = Caret(e);
+  intptr_t n   = UArg(arg);
+  while ( n-- > 0 )
+    pos = grapheme_cluster_start(e->text_buffer, pos);
+  return CaretEditor(e, toInt(pos));
 }
 
 
@@ -2002,15 +2039,24 @@ previousLineEditor(Editor e, Int arg, Int column)
 static status
 deleteCharEditor(Editor e, Int arg)
 { MustBeEditable(e);
-
-  return delete_textbuffer(e->text_buffer, Caret(e), UArg(arg));
+  intptr_t from = Caret(e);
+  intptr_t to   = from;
+  intptr_t n    = UArg(arg);
+  while ( n-- > 0 )
+    to = grapheme_cluster_end(e->text_buffer, to);
+  return delete_textbuffer(e->text_buffer, from, to - from);
 }
 
 
 static status
 backwardDeleteCharEditor(Editor e, Int arg)
 { MustBeEditable(e);
-  return delete_textbuffer(e->text_buffer, Caret(e), -UArg(arg));
+  intptr_t to   = Caret(e);
+  intptr_t from = to;
+  intptr_t n    = UArg(arg);
+  while ( n-- > 0 )
+    from = grapheme_cluster_start(e->text_buffer, from);
+  return delete_textbuffer(e->text_buffer, from, to - from);
 }
 
 
