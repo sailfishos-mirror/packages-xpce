@@ -3,7 +3,7 @@
  *  This file is in the public domain.
  *
  *  NFD (Normative Decomposition) text uses a base character followed by a
- *  combining mark as separate code points, e.g. "e" + U+0301 instead of "é".
+ *  combining mark as separate code points, e.g. "e" + U+0301 instead of "é".
  *  Double-width characters are East-Asian CJK/kana/hangul glyphs that each
  *  occupy two terminal columns.
  *
@@ -67,32 +67,32 @@ greeting(thai,     'สวัสดีชาวโลก').
 /*  Each atom below is written in NFD: the combining mark follows its base
  *  character as a literal Unicode code point in the UTF-8 source.
  *
- *  café      — e + U+0301 (combining acute accent)
- *  naïve     — i + U+0308 (combining diaeresis)
- *  résumé    — e + U+0301, repeated at end
- *  señor     — n + U+0303 (combining tilde)
- *  Zürich    — u + U+0308
- *  garçon    — c + U+0327 (combining cedilla)
- *  rôle      — o + U+0302 (combining circumflex)
+ *  café      — e + U+0301 (combining acute accent)
+ *  naïve     — i + U+0308 (combining diaeresis)
+ *  résumé    — e + U+0301, repeated at end
+ *  señor     — n + U+0303 (combining tilde)
+ *  Zürich    — u + U+0308
+ *  garçon    — c + U+0327 (combining cedilla)
+ *  rôle      — o + U+0302 (combining circumflex)
  */
 
-nfd_word(french,  'café').         % e + combining acute U+0301
-nfd_word(french,  'naïve').        % i + combining diaeresis U+0308
-nfd_word(french,  'résumé').       % e+0301, e+0301
-nfd_word(spanish, 'señor').        % n + combining tilde U+0303
-nfd_word(spanish, 'piñata').       % n + combining tilde U+0303
-nfd_word(german,  'Zürich').       % u + combining diaeresis U+0308
-nfd_word(german,  'Köln').         % o + combining diaeresis U+0308
-nfd_word(german,  'Düsseldorf').   % u + combining diaeresis U+0308
-nfd_word(french,  'garçon').       % c + combining cedilla U+0327
-nfd_word(french,  'rôle').         % o + combining circumflex U+0302
-nfd_word(french,  'naïveté').      % i+0308, e+0301
-nfd_word(german,  'für').          % u + combining diaeresis U+0308
-nfd_word(german,  'schön').        % o + combining diaeresis U+0308
-nfd_word(spanish, 'mañana').       % n + combining tilde U+0303
-nfd_word(spanish, 'año').          % n + combining tilde U+0303
-nfd_word(portuguese, 'ação').      % a+0303, a+0303 (combining tilde on a)
-nfd_word(portuguese, 'coração').   % a+0303 twice
+nfd_word(french,  'café').         % e + combining acute U+0301
+nfd_word(french,  'naïve').        % i + combining diaeresis U+0308
+nfd_word(french,  'résumé').       % e+0301, e+0301
+nfd_word(spanish, 'señor').        % n + combining tilde U+0303
+nfd_word(spanish, 'piñata').       % n + combining tilde U+0303
+nfd_word(german,  'Zürich').       % u + combining diaeresis U+0308
+nfd_word(german,  'Köln').         % o + combining diaeresis U+0308
+nfd_word(german,  'Düsseldorf').   % u + combining diaeresis U+0308
+nfd_word(french,  'garçon').       % c + combining cedilla U+0327
+nfd_word(french,  'rôle').         % o + combining circumflex U+0302
+nfd_word(french,  'naïveté').      % i+0308, e+0301
+nfd_word(german,  'für').          % u + combining diaeresis U+0308
+nfd_word(german,  'schön').        % o + combining diaeresis U+0308
+nfd_word(spanish, 'mañana').       % n + combining tilde U+0303
+nfd_word(spanish, 'año').          % n + combining tilde U+0303
+nfd_word(portuguese, 'ação').      % a+0303, a+0303 (combining tilde on a)
+nfd_word(portuguese, 'coração').   % a+0303 twice
 
 		 /*******************************
 		 *   MIXED NFD + DOUBLE-WIDTH  *
@@ -103,14 +103,14 @@ nfd_word(portuguese, 'coração').   % a+0303 twice
  *  (two visual columns).
  */
 
-mixed_line('東京 café 北京').
-mixed_line('中文 Zürich 日本語').
-mixed_line('こんにちは crêpe アイウエオ señor').
-mixed_line('한국어 garçon 가나다라').
-mixed_line('αβγ café αβγ naïve ωψχ').
-mixed_line('résumé 東京 Köln 大阪 piñata 京都').
-mixed_line('北京 für 서울 schön 臺北 rôle 上海').
-mixed_line('한국어 mañana 가나다라 año 나다라마').
+mixed_line('東京 café 北京').
+mixed_line('中文 Zürich 日本語').
+mixed_line('こんにちは crêpe アイウエオ señor').
+mixed_line('한국어 garçon 가나다라').
+mixed_line('αβγ café αβγ naïve ωψχ').
+mixed_line('résumé 東京 Köln 大阪 piñata 京都').
+mixed_line('北京 für 서울 schön 臺北 rôle 上海').
+mixed_line('한국어 mañana 가나다라 año 나다라마').
 
 		 /*******************************
 		 *  PREDICATES WITH WIDE NAMES *
@@ -151,11 +151,11 @@ cjk_word('어')   --> ['어'].
 cjk_list(['東京', '大阪', '京都', '名古屋', '札幌',
           '서울', '부산', '인천', '北京', '上海']).
 
-nfd_list(['café', 'naïve', 'résumé', 'señor', 'Zürich',
-          'Köln', 'garçon', 'rôle', 'piñata', 'mañana']).
+nfd_list(['café', 'naïve', 'résumé', 'señor', 'Zürich',
+          'Köln', 'garçon', 'rôle', 'piñata', 'mañana']).
 
-mixed_list(['東京 café', '大阪 résumé', '서울 señor',
-            '北京 Zürich', 'こんにちは naïve', 'αβγ garçon']).
+mixed_list(['東京 café', '大阪 résumé', '서울 señor',
+            '北京 Zürich', 'こんにちは naïve', 'αβγ garçon']).
 
 		 /*******************************
 		 *   STRING OPERATIONS         *
@@ -165,8 +165,8 @@ joined_cjk(J) :-
     atom_concat('東京', '大阪', J).
 
 joined_nfd(J) :-
-    atom_concat('café', ' et ', T),
-    atom_concat(T, 'naïve', J).
+    atom_concat('café', ' et ', T),
+    atom_concat(T, 'naïve', J).
 
 split_demo :-
     atom_chars('中文テスト', Cs),
@@ -174,9 +174,9 @@ split_demo :-
     format("chars: ~w  length: ~w~n", [Cs, N]).
 
 nfd_length_demo :-
-    atom_codes('café', Codes),       % 5 codes (e + combining acute = 2)
+    atom_codes('café', Codes),       % 5 codes (e + combining acute = 2)
     length(Codes, N),
-    format("café code count: ~w~n", [N]).
+    format("café code count: ~w~n", [N]).
 
 		 /*******************************
 		 *   COMMENT STRESS TEST       *
@@ -185,7 +185,7 @@ nfd_length_demo :-
 /*  以下はコメントのストレステストです。
  *  この行には日本語と中文が混在しています。
  *  한국어도 포함되어 있습니다.
- *  NFD: café résumé naïve señor Zürich garçon rôle
+ *  NFD: café résumé naïve señor Zürich garçon rôle
  *  double-width: 东西南北 上下左右 春夏秋冬 日月星辰
  *  wide emoji: 🌏 🗾 🏯 🗼 🍣 🍜 🍱
  */
@@ -193,7 +193,7 @@ nfd_length_demo :-
 %  一行コメント: 東京・大阪・京都・名古屋・札幌
 %  한 줄 주석: 서울, 부산, 인천, 대구, 광주
 %  单行注释: 北京、上海、广州、深圳、成都
-%  NFD line: café señor Zürich naïve résumé garçon
+%  NFD line: café señor Zürich naïve résumé garçon
 
 		 /*******************************
 		 *   DEMO PREDICATE            *
