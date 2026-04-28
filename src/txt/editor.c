@@ -59,6 +59,7 @@ static status		centerWindowEditor(Editor, Int);
 static status		columnEditor(Editor, Int);
 static status		ChangedRegionEditor(Editor, Int, Int);
 static status		ChangedEditor(Editor);
+static status		nfdStyleEditor(Editor, Style);
 static status		appendKill(CharArray);
 static status		prependKill(CharArray);
 static status		geometryEditor(Editor, Int, Int, Int, Int);
@@ -600,6 +601,14 @@ selectedFragmentEditor(Editor e, Fragment fr)
 
 
 static status
+nfdStyleEditor(Editor e, Style style)
+{ assign(e, nfd_style, style);
+  ChangedEditor(e);
+
+  succeed;
+}
+
+static status
 selectedFragmentStyleEditor(Editor e, Style style)
 { if ( e->selected_fragment_style != style )
   { assign(e, selected_fragment_style, style);
@@ -1134,6 +1143,26 @@ fetch_editor(Any obj, TextChar tc)
 	tc->colour = s->colour;
       if ( notDefault(s->background) )
 	tc->background = s->background;
+    }
+  }
+
+  if ( notNil(e->nfd_style) && !isDefault(e->nfd_style) )
+  { Style s = e->nfd_style;
+    uchar_t c = (uchar_t)tc->value.c;
+    bool nfd = false;
+
+    if ( uchar_display_width(c) == 0 )           /* this char is a combining mark */
+      nfd = true;
+    else if ( index+1 < e->text_buffer->size &&  /* next char is a combining mark */
+	      uchar_display_width((uchar_t)Fetch(e, index+1)) == 0 )
+      nfd = true;
+
+    if ( nfd )
+    { if ( notDefault(s->background) )
+	tc->background = s->background;
+      if ( notDefault(s->colour) )
+	tc->colour = s->colour;
+      tc->attributes |= s->attributes;
     }
   }
 
@@ -5060,6 +5089,8 @@ static vardecl var_editor[] =
      NAME_appearance, "Distance between tabs"),
   IV(NAME_selectionStyle, "[style]", IV_GET,
      NAME_appearance, "Feedback for the <-selection"),
+  SV(NAME_nfdStyle, "style*", IV_GET|IV_STORE, nfdStyleEditor,
+     NAME_appearance, "Style for NFD grapheme clusters (@nil to disable)"),
   SV(NAME_selectedFragment, "fragment*", IV_GET|IV_STORE,
      selectedFragmentEditor,
      NAME_selection, "The current fragment"),
@@ -5591,6 +5622,8 @@ static classvardecl rc_editor[] =
      UXWIN("style(background := yellow)",
 	   "@_select_style"),
      "Style for <-selection"),
+  RC(NAME_nfdStyle, "style*", "@nil",
+     "Style for NFD grapheme clusters (default off)"),
   RC(NAME_insertDeletesSelection, "bool", "@on",
      "->insert_self and ->paste delete the selection"),
   RC(NAME_caretMovesOnSelect, "bool", "@on",

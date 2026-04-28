@@ -496,7 +496,7 @@ do_fill_line(TextImage ti, TextLine l, long index)
 	    last_is_space = TRUE;
 	    break;
 	  default:
-	  { int dw = uchar_display_width((wint_t)tc->value.c);
+	  { int dw = uchar_display_width((uchar_t)tc->value.c);
 	    if ( dw != 0 )	/* combining/zero-width: don't advance x */
 	    { x += c_width((wint_t)tc->value.c, tc->font);
 	      if ( last_is_space )
@@ -1090,17 +1090,17 @@ paint_line(TextImage ti, Area a, TextLine l, int from, int to)
 	while ( ci < e )
 	{ charW *sub = bp;
 	  int    sub_x = (int)l->chars[ci].x;
-	  int    dw = uchar_display_width((wint_t)*bp);
+	  int    dw = uchar_display_width((uchar_t)*bp);
 
 	  if ( dw == 2 )
 	  { /* Wide cluster: base glyph + any following combiners. */
 	    bp++; ci++;
-	    while ( ci < e && uchar_display_width((wint_t)*bp) == 0 )
+	    while ( ci < e && uchar_display_width((uchar_t)*bp) == 0 )
 	    { bp++; ci++; }
 	  } else
 	  { /* Non-wide batch: consume until a wide char or end of run. */
 	    do { bp++; ci++; }
-	    while ( ci < e && uchar_display_width((wint_t)*bp) != 2 );
+	    while ( ci < e && uchar_display_width((uchar_t)*bp) != 2 );
 	  }
 	  s_printW(sub, (int)(bp-sub), sub_x, ty, f);
 	}

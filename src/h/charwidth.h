@@ -35,7 +35,15 @@
 #ifndef PCE_CHARWIDTH_H_INCLUDED
 #define PCE_CHARWIDTH_H_INCLUDED
 
+#include <stdint.h>
 #include <wchar.h>
+
+/* uchar_t is also defined in terminal.h; use the same guard to avoid
+ * duplicate typedef errors when both headers are included. */
+#ifndef UCHAR_T_DEFINED
+#define UCHAR_T_DEFINED
+typedef uint32_t uchar_t;
+#endif
 
 #ifndef _WIN32
 /* Forward declaration: avoids _XOPEN_SOURCE requirements while still
@@ -60,7 +68,7 @@ extern int wcwidth(wchar_t c);
  */
 
 static inline int
-uchar_display_width(wint_t c)
+uchar_display_width(uchar_t c)
 { if ( c == 0 )
     return 0;
   /* Non-spacing / combining characters.  Checked before wcwidth so the

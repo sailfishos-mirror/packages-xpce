@@ -40,6 +40,7 @@
 #define SWIPL_WINDOWS_NATIVE_ACCESS 1
 #include <h/kernel.h>
 #include <h/text.h>
+#include <h/charwidth.h>
 #include "terminal.h"
 #ifdef HAVE_POLL
 #include <poll.h>
@@ -100,7 +101,6 @@
 /* uchar_display_width() is defined as a static inline in <h/charwidth.h>.
  * terminal.c defines _XOPEN_SOURCE 600 before any includes so the
  * wcwidth(3) fallback inside charwidth.h is available here. */
-
 
 /* Per-line cell capacity.  One cell per visual column is not enough:
    NFD content attaches combining marks as their own (width-0) cells, so a
@@ -883,6 +883,12 @@ selectionStyleTerminalImage(TerminalImage ti, Style sel)
 }
 
 static status
+nfdStyleTerminalImage(TerminalImage ti, Style s)
+{ assign(ti, nfd_style, s);
+  return refreshTerminalImage(ti);
+}
+
+static status
 ansiColoursTerminalImage(TerminalImage ti, Vector colours)
 { assign(ti, ansi_colours, colours);
   return refreshTerminalImage(ti);
@@ -982,6 +988,8 @@ static vardecl var_terminal_image[] =
   SV(NAME_selectionStyle, "[style]", IV_GET|IV_STORE,
      selectionStyleTerminalImage,
      NAME_appearance, "Feedback for the selection"),
+  SV(NAME_nfdStyle, "style*", IV_GET|IV_STORE, nfdStyleTerminalImage,
+     NAME_appearance, "Style for NFD grapheme clusters (@nil to disable)"),
   SV(NAME_ansiColours, "vector*", IV_GET|IV_STORE, ansiColoursTerminalImage,
      NAME_appearance, "The 16 ansi colours"),
   IV(NAME_armedLink, "bool", IV_GET,
@@ -1088,6 +1096,8 @@ static classvardecl rc_terminal_image[] =
      UXWIN("style(background := yellow)",
 	   "@_select_style"),
      "Style for <-selection"),
+  RC(NAME_nfdStyle, "style*", "@nil",
+     "Style for NFD grapheme clusters (default off)"),
   RC(NAME_saveLines, "int", "1000",
      "How many lines are saved for scroll back"),
   RC(NAME_syntax, "[syntax_table]", "default",
@@ -2075,6 +2085,24 @@ rlc_paint_text(RlcData b,
 	      t, ulen, x0, *cx-x0, ty, pp(ti->font));
 #endif
       r_clear(x0, ty-b->cb, *cx-x0, b->ch);
+      if ( notNil(ti->nfd_style) && !isDefault(ti->nfd_style) )
+      { Colour nfd_bg = ti->nfd_style->background;
+	if ( notDefault(nfd_bg) )
+	{ int col = 0;
+	  for(int ci = 0; ci < segment; )
+	  { if ( s[ci].code == 0 ) { ci++; continue; } /* skip wide-char right-half: col advanced by base */
+	    int base_col = col;
+	    int base_width = (s[ci].width == 2) ? 2 : 1;
+	    col += base_width; ci++;
+	    bool has_combining = false;
+	    while ( ci < segment && s[ci].width == 0 && s[ci].code != 0 )
+	    { has_combining = true; ci++; }
+	    if ( has_combining )
+	      r_fill(x0 + base_col*b->cw, ty-b->cb,
+		     base_width*b->cw, b->ch, nfd_bg);
+	  }
+	}
+      }
       paint_chunks(s, segment, t, ulen, x0, ty, b->cw, font,
                    TF_UNDERLINE(flags));
       if ( TF_INVERSE(flags) )

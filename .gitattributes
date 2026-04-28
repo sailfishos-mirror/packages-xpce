@@ -1,0 +1,2 @@
+# Avoid Unicode NFC normalization
+tests/unicode_heavy.pl  text eol=lf
