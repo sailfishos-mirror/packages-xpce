@@ -1,9 +1,9 @@
-/*  Part of SWI-Prolog
+/*  Part of XPCE --- The SWI-Prolog GUI toolkit
 
     Author:        Jan Wielemaker
     E-mail:        jan@swi-prolog.org
     WWW:           https://www.swi-prolog.org
-    Copyright (c)  2025, SWI-Prolog Solutions b.v.
+    Copyright (c)  2026, SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -32,41 +32,39 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef CHARWIDTH_H_INCLUDED
-#define CHARWIDTH_H_INCLUDED
+#ifndef PCE_CHARWIDTH_H_INCLUDED
+#define PCE_CHARWIDTH_H_INCLUDED
 
-#include <stdint.h>
-#ifndef _WIN32
 #include <wchar.h>
+
+#ifndef _WIN32
+/* Forward declaration: avoids _XOPEN_SOURCE requirements while still
+ * calling the system wcwidth for code points not covered by our tables. */
+extern int wcwidth(wchar_t c);
 #endif
 
-/* uchar_t is also defined in terminal.h; use the same guard. */
-#ifndef UCHAR_T_DEFINED
-#define UCHAR_T_DEFINED
-typedef uint32_t uchar_t;
-#endif
-
-/** Visual display width of a Unicode code point.
+/** Return the display column width of a Unicode code point.
  *
  * Returns 0 for combining / non-spacing characters (they attach to
  * the preceding base character and consume no extra column), 2 for
  * East-Asian wide / fullwidth characters, and 1 for everything else.
  *
  * The implementation delegates to the POSIX wcwidth(3) function which
- * is available on all supported Unix/macOS platforms when
- * _XOPEN_SOURCE >= 600.  On Windows, where wcwidth is absent, we use
- * a minimal inline table that covers the most common ranges.
+ * is available on all supported Unix/macOS platforms.  On Windows,
+ * where wcwidth is absent, we use a minimal inline table that covers
+ * the most common ranges.
+ *
+ * This function is shared between txt/terminal.c, txt/textimage.c, and
+ * txt/editor.c.  It is declared static inline so each translation unit
+ * gets its own copy without link-time conflicts.
  */
+
 static inline int
-uchar_display_width(uchar_t c)
+uchar_display_width(wint_t c)
 { if ( c == 0 )
     return 0;
   /* Non-spacing / combining characters.  Checked before wcwidth so the
-   * result is independent of the process locale: wcwidth() only returns
-   * 0 for combining marks when the locale's charset covers the code
-   * point, and returns -1 in the C locale.  Getting this wrong means
-   * combining marks claim one column, which throws off every caret and
-   * selection calculation downstream. */
+   * result is independent of the process locale. */
   if ( (c >= 0x0300 && c <= 0x036F) ||	/* Combining Diacritical Marks */
        (c >= 0x1AB0 && c <= 0x1AFF) ||	/* Combining Diacritical Marks Extended */
        (c >= 0x1DC0 && c <= 0x1DFF) ||	/* Combining Diacritical Marks Supplement */
@@ -106,4 +104,4 @@ uchar_display_width(uchar_t c)
   return 1;
 }
 
-#endif /*CHARWIDTH_H_INCLUDED*/
+#endif /*PCE_CHARWIDTH_H_INCLUDED*/

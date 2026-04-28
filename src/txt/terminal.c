@@ -34,7 +34,7 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-#define _XOPEN_SOURCE 600	/* Get PTY API, wcwidth */
+#define _XOPEN_SOURCE 600	/* Get PTY API, wcwidth (also enables wcwidth in charwidth.h) */
 #undef _WIN32_WINNT
 #define _WIN32_WINNT 0x0B00	/* Get PseudoConsole API */
 #define SWIPL_WINDOWS_NATIVE_ACCESS 1
@@ -48,6 +48,7 @@
 #ifndef _WIN32
 #include <wchar.h>
 #endif
+#include <h/charwidth.h>
 
 /* This file  implements a terminal  emulator in XPCE.  A  terminal is
  * connected to a Prolog thread, the _client_.
@@ -96,67 +97,9 @@
 		 *	  UNICODE WIDTH		*
 		 *******************************/
 
-/** Return the display column width of a Unicode code point.
- *
- * Returns 0 for combining / non-spacing characters (they attach to
- * the preceding base character and consume no extra column), 2 for
- * East-Asian wide / fullwidth characters, and 1 for everything else.
- *
- * The implementation delegates to the POSIX wcwidth(3) function which
- * is available on all supported Unix/macOS platforms when
- * _XOPEN_SOURCE >= 600.  On Windows, where wcwidth is absent, we use
- * a minimal inline table that covers the most common ranges.
- */
-
-static int
-uchar_display_width(uchar_t c)
-{
-  if ( c == 0 )
-    return 0;
-  /* Non-spacing / combining characters.  Checked before wcwidth so the
-   * result is independent of the process locale: wcwidth() only returns
-   * 0 for combining marks when the locale's charset covers the code
-   * point, and returns -1 in the C locale.  Getting this wrong means
-   * combining marks claim one column, which throws off every caret and
-   * selection calculation downstream. */
-  if ( (c >= 0x0300 && c <= 0x036F) ||	/* Combining Diacritical Marks */
-       (c >= 0x1AB0 && c <= 0x1AFF) ||	/* Combining Diacritical Marks Extended */
-       (c >= 0x1DC0 && c <= 0x1DFF) ||	/* Combining Diacritical Marks Supplement */
-       (c >= 0x20D0 && c <= 0x20FF) ||	/* Combining Diacritical Marks for Symbols */
-       (c >= 0xFE20 && c <= 0xFE2F) ||	/* Combining Half Marks */
-       c == 0x200C || c == 0x200D ||	/* ZWNJ / ZWJ */
-       c == 0xFE0E || c == 0xFE0F )	/* Variation Selectors 15 / 16 */
-    return 0;
-  /* East-Asian wide / fullwidth characters and wide emoji. */
-  if ( (c >= 0x1100 && c <= 0x115F) ||	/* Hangul Jamo */
-       (c >= 0x2E80 && c <= 0x303E) ||	/* CJK Radicals etc. */
-       (c >= 0x3041 && c <= 0x33BF) ||	/* Hiragana .. CJK Compatibility */
-       (c >= 0x3400 && c <= 0x4DBF) ||	/* CJK Extension A */
-       (c >= 0x4E00 && c <= 0x9FFF) ||	/* CJK Unified Ideographs */
-       (c >= 0xA000 && c <= 0xA4CF) ||	/* Yi */
-       (c >= 0xA960 && c <= 0xA97F) ||	/* Hangul Jamo Extended-A */
-       (c >= 0xAC00 && c <= 0xD7FF) ||	/* Hangul Syllables + Jamo Ext-B */
-       (c >= 0xF900 && c <= 0xFAFF) ||	/* CJK Compatibility Ideographs */
-       (c >= 0xFE10 && c <= 0xFE1F) ||	/* Vertical Forms */
-       (c >= 0xFE30 && c <= 0xFE4F) ||	/* CJK Compatibility Forms */
-       (c >= 0xFF01 && c <= 0xFF60) ||	/* Fullwidth Latin/Katakana */
-       (c >= 0xFFE0 && c <= 0xFFE6) ||	/* Fullwidth Signs */
-       (c >= 0x1B000 && c <= 0x1B0FF) ||/* Kana Supplement */
-       (c >= 0x1F004 && c <= 0x1F0CF) ||/* Mahjong/Domino tiles */
-       (c >= 0x1F300 && c <= 0x1F9FF) ||/* Misc Symbols, Emoticons */
-       (c >= 0x20000 && c <= 0x2FFFD) ||/* CJK Extension B-F */
-       (c >= 0x30000 && c <= 0x3FFFD) ) /* CJK Extension G-H */
-    return 2;
-#ifndef _WIN32
-  /* Fall back to wcwidth for rare cases not covered above.  Treat
-   * wcwidth=-1 (unknown to this locale) as 1 column. */
-  { int w = wcwidth((wchar_t)c);
-    if ( w >= 0 )
-      return w;
-  }
-#endif
-  return 1;
-}
+/* uchar_display_width() is defined as a static inline in <h/charwidth.h>.
+ * terminal.c defines _XOPEN_SOURCE 600 before any includes so the
+ * wcwidth(3) fallback inside charwidth.h is available here. */
 
 
 /* Per-line cell capacity.  One cell per visual column is not enough:
