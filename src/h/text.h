@@ -301,6 +301,7 @@ NewClass(terminal_image)
   FontObj	bold_font;		/* Boldened font */
   Colour	background;		/* Background colour */
   Style		selection_style;	/* Style for selected text  */
+  Style		isearch_style;		/* ... while searching for it */
   Style		nfd_style;		/* Style for NFD grapheme clusters */
   Style		link_style;		/* Style for hyperlinks  */
   Style		link_armed_style;	/* Style for the hovered link  */
@@ -310,6 +311,11 @@ NewClass(terminal_image)
   ScrollBar	scroll_bar;		/* Associated scrollbar */
   Int		save_lines;		/* # saved lines */
   SyntaxTable	syntax;			/* Word description */
+  Name		focus_function;		/* Function in focus */
+  StringObj	search_string;		/* Target of the search */
+  Name		search_direction;	/* Direction of the search */
+  BoolObj	search_wrapped_warned;	/* Search hit the end of the buffer */
+  BoolObj	exact_case;		/* Search is case sensitive */
   struct rlc_data *data;		/* The buffered data */
 End;
 

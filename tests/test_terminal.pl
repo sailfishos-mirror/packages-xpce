@@ -171,6 +171,7 @@ terminal_test_unit(terminal_alt_scroll).
 terminal_test_unit(terminal_mouse_reports).
 terminal_test_unit(terminal_wrap).
 terminal_test_unit(terminal_search).
+terminal_test_unit(terminal_isearch).
 terminal_test_unit(terminal_resize).
 terminal_test_unit(terminal_control_keys).
 terminal_test_unit(terminal_function_keys).
@@ -3967,6 +3968,233 @@ test(scroll_to_fails_on_the_alternate_screen,
     \+ term_scroll_to(T, 0).
 
 :- end_tests(terminal_search).
+
+
+		 /*******************************
+		 *       TEST: ISEARCH          *
+		 *******************************/
+
+/** <section> Incremental search
+
+    Ctrl-Shift-F puts a focus function in the way of ->typed, which then
+    sees every key until the search ends.  That is what most of these
+    tests are about: while the search runs, the keys are the window's
+    and nothing must reach the process on the terminal -- not the
+    letters that are typed, and not the Return or the Escape that ends
+    the search, which would otherwise submit a line to whatever is
+    reading.
+
+    The buffer never grows while a search runs, so its length is the
+    evidence: a key that leaked to the client comes back as output.
+*/
+
+:- begin_tests(terminal_isearch,
+               [ condition(needs([program_output, selection])),
+                 setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
+
+%!  isearch(+T) is det.
+%!  isearch_key(+T, +Key) is det.
+%!  isearch_type(+T, +Text) is det.
+%
+%   Start a search and drive it.  These press keys at the window with
+%   term_typed/3 rather than putting bytes on the terminal: the focus
+%   function is reached through ->typed and nothing else.
+
+isearch(T) :-
+    button_control(Control),
+    button_shift(Shift),
+    Buttons is Control \/ Shift,
+    term_typed(T, 0'\006, Buttons),         % Ctrl-Shift-F
+    drive(0.2).
+
+isearch_key(T, Letter) :-
+    Code is Letter /\ 0x1f,
+    button_control(Control),
+    term_typed(T, Code, Control),
+    drive(0.2).
+
+isearch_type(T, Text) :-
+    atom_codes(Text, Codes),
+    forall(member(Code, Codes), term_typed(T, Code, 0)),
+    drive(0.2).
+
+isearch_named_key(T, Key) :-
+    term_typed(T, Key, 0),
+    drive(0.2).
+
+%!  isearch_stop(+T) is det.
+%
+%   End a search that is still running.  A test that leaves one behind
+%   hands the next one a Ctrl-Shift-F that repeats its search string
+%   rather than starting over.
+
+isearch_stop(T) :-
+    T = terminal(_, xpce(_, TI)),
+    (   get(TI, focus_function, @nil)
+    ->  true
+    ;   isearch_key(T, 0'G)
+    ).
+
+%!  on_screen(+T, +Text) is semidet.
+%
+%   True when a visible row holds exactly Text.
+
+on_screen(T, Text) :-
+    term_rows(T, Rows),
+    Last is Rows-1,
+    between(0, Last, Row),
+    row_text(T, Row, Text),
+    !.
+
+test(isearch_selects_what_it_finds,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    scrollback(T, 60),
+    isearch(T),
+    isearch_type(T, line42),
+    term_selection(T, Selected),
+    assertion(Selected == line42).
+
+test(isearch_narrows_as_you_type,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    scrollback(T, 60),
+    isearch(T),
+    isearch_type(T, line4),
+    term_selection(T, First),
+    assertion(First == line4),
+    isearch_type(T, '2'),
+    term_selection(T, Second),
+    assertion(Second == line42).
+
+test(isearch_backspace_widens_again,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    scrollback(T, 60),
+    isearch(T),
+    isearch_type(T, line42),
+    isearch_named_key(T, 'BS'),
+    term_selection(T, Selected),
+    assertion(Selected == line4).
+
+test(isearch_escape_keeps_the_hit, [setup(test_begin(T))]) :-
+    scrollback(T, 60),
+    isearch(T),
+    isearch_type(T, line42),
+    isearch_named_key(T, 'ESC'),
+    assertion(term_has_selection(T)),
+    term_selection(T, Selected),
+    assertion(Selected == line42).
+
+test(isearch_abort_gives_back_view_and_selection, [setup(test_begin(T))]) :-
+    %  ^G is the way out that pretends the search never happened.
+    %  line12 and not line5: `line5' is a prefix of line50..line59,
+    %  which are on the screen, so the search would never leave it.
+    scrollback(T, 60),
+    term_bubble(T, _, Before, _),
+    isearch(T),
+    isearch_type(T, line12),
+    term_bubble(T, _, Searching, _),
+    assertion(Searching < Before),          % it scrolled to the hit
+    isearch_key(T, 0'G),
+    term_bubble(T, _, After, _),
+    assertion(After == Before),
+    assertion(\+ term_has_selection(T)).
+
+test(isearch_keys_do_not_reach_the_client, [setup(test_begin(T))]) :-
+    %  Nothing is written while a search runs, so the buffer standing
+    %  still is what says the keys stayed at the window.
+    scrollback(T, 60),
+    term_length(T, Before),
+    isearch(T),
+    isearch_type(T, line42),
+    isearch_key(T, 0'S),
+    isearch_key(T, 0'R),
+    isearch_key(T, 0'G),
+    drive(0.3),
+    term_length(T, After),
+    assertion(After == Before).
+
+test(isearch_escape_does_not_reach_the_client, [setup(test_begin(T))]) :-
+    scrollback(T, 60),
+    term_length(T, Before),
+    isearch(T),
+    isearch_type(T, line42),
+    isearch_named_key(T, 'ESC'),
+    drive(0.3),
+    term_length(T, After),
+    assertion(After == Before).
+
+test(isearch_return_does_not_reach_the_client, [setup(test_begin(T))]) :-
+    %  The one that costs the most if it gets through: a Return at a
+    %  shell prompt runs whatever is on the input line.
+    scrollback(T, 60),
+    term_length(T, Before),
+    isearch(T),
+    isearch_type(T, line42),
+    isearch_named_key(T, 'RET'),
+    drive(0.3),
+    term_length(T, After),
+    assertion(After == Before).
+
+test(isearch_holds_the_view_against_output,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Output normally pulls the window back to the caret.  While the
+    %  user is driving the view, it must not: at a live prompt bytes
+    %  keep arriving and the search would be thrown back to the bottom
+    %  between one keystroke and the next.
+    scrollback(T, 60),
+    isearch(T),
+    isearch_type(T, line12),
+    assertion(on_screen(T, line12)),
+    out(T, 'noise\r\n'),
+    drive(0.3),
+    assertion(on_screen(T, line12)).
+
+test(isearch_wraps_after_a_warning,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Emacs' two-step wrap: running out only says so, and the attempt
+    %  after that starts over at the far end.  The two hits are a
+    %  screenful apart, so which one the search is on is the one that
+    %  is on the screen.
+    out(T, '\e[3J\e[H\e[2J'),
+    out(T, 'HIT alpha\r\n'),
+    forall(between(1, 50, I), out(T, ['filler', I, '\r\n'])),
+    out(T, 'HIT omega\r\n'),
+    isearch(T),
+    isearch_type(T, 'HIT'),
+    assertion(on_screen(T, 'HIT omega')),   % the nearest one, going back
+    assertion(\+ on_screen(T, 'HIT alpha')),
+    isearch_key(T, 0'R),
+    assertion(on_screen(T, 'HIT alpha')),   % ... and the one before it
+    assertion(\+ on_screen(T, 'HIT omega')),
+    isearch_key(T, 0'R),
+    assertion(on_screen(T, 'HIT alpha')),   % nothing left: it only warns
+    isearch_key(T, 0'R),
+    assertion(on_screen(T, 'HIT omega')).   % and now it wraps
+
+test(isearch_refuses_the_alternate_screen,
+     [ setup(test_begin(T)),
+       cleanup(normal_screen(T))
+     ]) :-
+    %  The lines an application replaces are not in the ring, so there
+    %  is nothing to find and nowhere to scroll.
+    scrollback(T, 60),
+    alt_screen(T, 'ALT-SCREEN'),
+    isearch(T),
+    assertion(\+ term_has_selection(T)),
+    assert_row(T, 0, 'ALT-SCREEN').
+
+:- end_tests(terminal_isearch).
 
 
 		 /*******************************

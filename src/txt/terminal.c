@@ -353,6 +353,8 @@ static const uchar_t *rlc_clicked_link(RlcData b, int x, int y);
 static const uchar_t *rlc_over_link(RlcData b, int x, int y);
 static href    *rlc_href_at(RlcData b, int x, int y, int *l, int *c);
 static status	refreshTerminalImage(TerminalImage ti);
+static status	endIsearchTerminalImage(TerminalImage ti, BoolObj keep);
+static bool	rlc_isearching(RlcData b);
 static href    *rlc_add_link(RlcTextLine tl, const uchar_t *link,
 			     int start, int len);
 static void	rlc_free_link(RlcData b, href *hr);
@@ -449,6 +451,10 @@ initialiseTerminalImage(TerminalImage ti, Int w, Int h)
   initialiseGraphical(ti, ZERO, ZERO, w, h);
   assign(ti, bindings, newObject(ClassKeyBinding, NIL, NAME_terminal, EAV));
   assign(ti, armed_link, OFF);
+  assign(ti, focus_function, NIL);
+  assign(ti, search_string, NIL);
+  assign(ti, search_direction, NAME_backward);
+  assign(ti, search_wrapped_warned, OFF);
   obtainClassVariablesObject(ti);
 
   // compute width in characters from w
@@ -906,6 +912,7 @@ eventTerminalImage(TerminalImage ti, EventObj ev)
     } else if ( isAEvent(ev, NAME_deactivateKeyboardFocus) )
     { ws_enable_text_input((Graphical)ti, OFF);
       b->has_focus = false;
+      endIsearchTerminalImage(ti, ON);	/* it lives off the keyboard */
       if ( b->focus_inout_events )
       { const char *focus_out = S_ESC"[O";
 	rlc_send(b, focus_out, strlen(focus_out));
@@ -923,6 +930,7 @@ eventTerminalImage(TerminalImage ti, EventObj ev)
   if ( isAEvent(ev, NAME_msLeftDown) )
   { RlcData b = ti->data;
     Int x, y;
+    endIsearchTerminalImage(ti, OFF);	/* the mouse takes the selection */
     get_xy_event(ev, ti, ON, &x, &y);
     if ( valInt(ev->buttons) & BUTTON_shift )
     { rlc_extend_selection(b, valInt(x), valInt(y));
@@ -1076,6 +1084,17 @@ typedTerminalImage(TerminalImage ti, EventObj ev)
   char buf[16];
   RlcData b = ti->data;
   int mod = xterm_modifier(ev);
+
+  /* An incremental search owns the keyboard until it lets go, ahead of
+   * everything below: the accelerators would fire on their keys and a
+   * process on the terminal would be handed the very letters the user
+   * is typing at the window.
+   */
+  if ( notNil(ti->focus_function) )
+  { if ( send(ti, ti->focus_function, ev, EAV) )
+      succeed;
+    assign(ti, focus_function, NIL);
+  }
 
   if ( ( (valInt(ev->buttons) & BUTTON_gui) ||
 	 ((valInt(ev->buttons) & (BUTTON_shift|BUTTON_control)) ==
@@ -1386,6 +1405,292 @@ scrollToTerminalImage(TerminalImage ti, Int index)
 }
 
 
+		 /*******************************
+		 *     INCREMENTAL SEARCH       *
+		 *******************************/
+
+/* Emacs-style incremental search over the buffer, as class editor does
+ * it: ->isearch_backward puts a focus function in the way of ->typed,
+ * which then sees every key until the search ends.
+ *
+ * Backward, because a terminal's history lies behind the caret: there
+ * is nothing ahead of a prompt to find.
+ *
+ * The hit is the selection.  The ring already carries the selection
+ * through everything that can happen to it -- a rewrap moves it, a
+ * recycled line clears it -- so the search has nothing of its own to
+ * keep up to date except where it started from, which it needs to give
+ * back the caret and the view when the user gives up.
+ */
+
+static bool
+rlc_isearching(RlcData b)
+{ TerminalImage ti = b->object;
+
+  return ti && notNil(ti->focus_function);
+}
+
+/* Index of a ring position in the text rlc_buffer_text() handed out,
+ * or -1 if the position is not in the buffer (any more).
+ */
+
+static ssize_t
+rlc_index_at(const rlc_pos *pos, size_t len, int line, int cell)
+{ for(size_t i=0; i<=len; i++)
+  { if ( pos[i].line == line && pos[i].cell >= cell )
+      return i;
+  }
+
+  return -1;
+}
+
+/* Where the next search step starts.  Everything is measured from
+ * where the current hit begins: extending the search string looks
+ * there again, so what is on the screen stays there as long as it
+ * still matches, and a repeat steps one character off it, which is
+ * what makes it move on rather than find what it is standing on.
+ * Stepping off the end of the hit instead would not do for a search
+ * going backwards -- the match starts before that and would be found
+ * all over again.  With no hit yet we are where the search started.
+ */
+
+static ssize_t
+rlc_isearch_start(RlcData b, const rlc_pos *pos, size_t len,
+		  bool fwd, bool repeat)
+{ ssize_t start;
+
+  if ( rlc_has_selection(b) )
+    start = rlc_index_at(pos, len, b->sel_start_line, b->sel_start_char);
+  else
+    start = rlc_index_at(pos, len,
+			 b->isearch.origin_line, b->isearch.origin_char);
+
+  if ( start < 0 )			/* scrolled out from under us */
+    return fwd ? 0 : (ssize_t)len;
+
+  /* After the fallback, not before it: stepping off the far end of the
+   * buffer is how a repeat runs out of places to look, and turning
+   * that into "start over at the other end" here would wrap on the
+   * first failure rather than on the attempt after it.
+   */
+  if ( repeat )
+    start += fwd ? 1 : -1;
+
+  return start;
+}
+
+static void
+reportIsearchTerminalImage(TerminalImage ti)
+{ StringObj s = ti->search_string;
+
+  send(ti, NAME_report, NAME_status, CtoName("ISearch %s: %s"),
+       ti->search_direction, isNil(s) ? (Any)CtoName("") : (Any)s, EAV);
+}
+
+static status
+beginIsearchTerminalImage(TerminalImage ti, Name direction)
+{ RlcData b = ti->data;
+
+  if ( rlc_alt_screen(b) )
+  { send(ti, NAME_report, NAME_warning,
+	 CtoName("Cannot search the alternate screen"), EAV);
+    fail;
+  }
+
+  assign(ti, search_direction,      direction);
+  assign(ti, search_wrapped_warned, OFF);
+  assign(ti, search_string,         NIL);
+  assign(ti, focus_function,        NAME_Isearch);
+
+  b->isearch.origin_line  = b->caret_y;
+  b->isearch.origin_char  = b->caret_x;
+  b->isearch.window_start = b->window_start;
+
+  rlc_set_selection(b, 0, 0, 0, 0);
+  reportIsearchTerminalImage(ti);
+
+  succeed;
+}
+
+/* Leave the search.  `keep' says whether the hit stays selected: ^G
+ * gives back the view and the selection the search started from, any
+ * other way out leaves what was found on the screen.
+ */
+
+static status
+endIsearchTerminalImage(TerminalImage ti, BoolObj keep)
+{ RlcData b = ti->data;
+
+  if ( !rlc_isearching(b) )
+    succeed;
+
+  assign(ti, focus_function, NIL);
+  assign(ti, search_string,  NIL);
+
+  if ( keep == OFF )
+  { rlc_set_selection(b, 0, 0, 0, 0);
+    /* Only if the line we started from is still in the ring: output
+     * during the search may have pushed it out, and a stale index
+     * counts as a line like any other.
+     */
+    if ( rlc_between(b, b->first, b->last, b->isearch.window_start) )
+      rlc_scroll_lines(b, ( rlc_count_lines(b, b->first,
+					    b->isearch.window_start) -
+			    rlc_count_lines(b, b->first, b->window_start) ));
+  }
+  rlc_request_redraw(b);
+  send(ti, NAME_report, NAME_status, CtoName(""), EAV);
+
+  succeed;
+}
+
+/* One search step.  `chr' is a character to append to the search
+ * string, or @default for a repeat; `from' overrides where to start,
+ * which is what backspace needs after it shortened the string.
+ *
+ * The wrap follows Emacs and class editor: the first failure only says
+ * so, and the attempt after it starts over at the far end.
+ */
+
+static status
+executeIsearchTerminalImage(TerminalImage ti, Int chr, Int from)
+{ RlcData b = ti->data;
+  bool fwd = ti->search_direction == NAME_forward;
+
+  if ( notDefault(chr) )
+  { if ( isNil(ti->search_string) )
+      assign(ti, search_string, newObject(ClassString, EAV));
+    insertCharacterString(ti->search_string, chr, DEFAULT, DEFAULT);
+  }
+
+  if ( isNil(ti->search_string) ||
+       valInt(getSizeCharArray(ti->search_string)) == 0 )
+  { reportIsearchTerminalImage(ti);
+    succeed;
+  }
+
+  size_t len;
+  rlc_pos *pos;
+  uchar_t *text = rlc_buffer_text(b, &len, &pos);
+  if ( !text )
+    fail;
+
+  ssize_t start = ( isDefault(from)
+		    ? rlc_isearch_start(b, pos, len, fwd, isDefault(chr))
+		    : valInt(from) );
+  ssize_t times = fwd ? 1 : -1;
+  bool ec = ti->exact_case == ON;
+  ssize_t hit = ucs_find(b, text, len, start, &ti->search_string->data,
+			 times, 'a', ec, false);
+
+  if ( hit < 0 && ti->search_wrapped_warned == ON )
+  { hit = ucs_find(b, text, len, fwd ? 0 : (ssize_t)len,
+		   &ti->search_string->data, times, 'a', ec, false);
+    assign(ti, search_wrapped_warned, OFF);
+  }
+
+  if ( hit < 0 )
+  { send(ti, NAME_report, NAME_warning, CtoName("Failing ISearch: %s"),
+	 ti->search_string, EAV);
+    if ( ti->search_wrapped_warned == OFF )
+      assign(ti, search_wrapped_warned, ON);
+  } else
+  { size_t end = hit + valInt(getSizeCharArray(ti->search_string));
+    if ( end > len )
+      end = len;
+    rlc_pos ps = rlc_pos_start(b, text, pos, len, hit);
+    rlc_pos pe = rlc_pos_end(pos, end);
+
+    rlc_set_selection(b, ps.line, ps.cell, pe.line, pe.cell);
+    send(ti, NAME_scrollTo, toInt(hit), EAV);
+    reportIsearchTerminalImage(ti);
+  }
+
+  rlc_free(text);
+  rlc_free(pos);
+  succeed;
+}
+
+static status
+isearchForwardTerminalImage(TerminalImage ti)
+{ return beginIsearchTerminalImage(ti, NAME_forward);
+}
+
+static status
+isearchBackwardTerminalImage(TerminalImage ti)
+{ return beginIsearchTerminalImage(ti, NAME_backward);
+}
+
+/* Drop the last character of the search string, and say whether
+ * anything is left.
+ */
+
+static bool
+shortenIsearchTerminalImage(TerminalImage ti)
+{ if ( notNil(ti->search_string) )
+  { int size = valInt(getSizeCharArray(ti->search_string));
+
+    if ( size > 1 )
+    { deleteString(ti->search_string, toInt(size-1), DEFAULT);
+      return true;
+    }
+  }
+
+  assign(ti, search_string, NIL);
+  return false;
+}
+
+/* The focus function: every key while the search runs.  Where class
+ * editor lets a key it does not want fall through to its ordinary
+ * meaning, we have to be careful about which ones: an unhandled key
+ * here is sent to the process on the terminal, and ending a search
+ * with Return is not a reason to submit a line to the shell.  So the
+ * keys that end the search are swallowed, and only those whose
+ * ordinary meaning is worth having -- ^C above all, which is how one
+ * interrupts a program that is still running -- fall through.
+ */
+
+static status
+IsearchTerminalImage(TerminalImage ti, EventObj ev)
+{ RlcData b = ti->data;
+  Name cnm = characterName(ev);
+  Any cmd  = getFunctionKeyBinding(ti->bindings, cnm);
+  int chr  = isInteger(ev->id) ? valInt(ev->id) : -1;
+
+  if ( cmd == NAME_isearchForward || cmd == NAME_isearchBackward ||
+       chr == Control('S') || chr == Control('R') )
+  { Name dir = ( cmd == NAME_isearchBackward || chr == Control('R')
+		 ? NAME_backward : NAME_forward );
+
+    assign(ti, search_direction, dir);
+    return executeIsearchTerminalImage(ti, DEFAULT, DEFAULT);
+  }
+
+  if ( cnm == NAME_backspace || ev->id == NAME_BS ||
+       chr == Control('H') || chr == 127 )
+  { if ( shortenIsearchTerminalImage(ti) )
+      return executeIsearchTerminalImage(ti, DEFAULT, DEFAULT);
+
+    rlc_set_selection(b, 0, 0, 0, 0);	/* nothing left to look for */
+    reportIsearchTerminalImage(ti);
+    succeed;
+  }
+
+  if ( chr == Control('G') )		/* abort: give back view and hit */
+    return endIsearchTerminalImage(ti, OFF);
+
+  if ( chr == ESC || chr == '\r' || chr == '\n' ||
+       ev->id == NAME_ESC || ev->id == NAME_RET )
+    return endIsearchTerminalImage(ti, ON);
+
+  if ( chr >= ' ' && chr < META_OFFSET )
+    return executeIsearchTerminalImage(ti, toInt(chr), DEFAULT);
+
+  endIsearchTerminalImage(ti, ON);	/* let the key mean what it means */
+  fail;
+}
+
+
 /* Return the logical cursor position as a Point(col, row).
  *
  * col is the visual column on the current line (sum of display widths
@@ -1662,6 +1967,12 @@ selectionStyleTerminalImage(TerminalImage ti, Style sel)
 }
 
 static status
+isearchStyleTerminalImage(TerminalImage ti, Style s)
+{ assign(ti, isearch_style, s);
+  return refreshTerminalImage(ti);
+}
+
+static status
 nfdStyleTerminalImage(TerminalImage ti, Style s)
 { assign(ti, nfd_style, s);
   return refreshTerminalImage(ti);
@@ -1786,6 +2097,8 @@ static vardecl var_terminal_image[] =
   SV(NAME_selectionStyle, "[style]", IV_GET|IV_STORE,
      selectionStyleTerminalImage,
      NAME_appearance, "Feedback for the selection"),
+  SV(NAME_isearchStyle, "style*", IV_GET|IV_STORE, isearchStyleTerminalImage,
+     NAME_appearance, "Feedback for the hit of an incremental search"),
   SV(NAME_nfdStyle, "style*", IV_GET|IV_STORE, nfdStyleTerminalImage,
      NAME_appearance, "Style for NFD grapheme clusters (@nil to disable)"),
   SV(NAME_linkStyle, "style*", IV_GET|IV_STORE, linkStyleTerminalImage,
@@ -1805,6 +2118,16 @@ static vardecl var_terminal_image[] =
      NAME_memory, "How many lines are saved for scroll back"),
   IV(NAME_syntax, "syntax_table", IV_BOTH,
      NAME_language, "Description of the used syntax"),
+  IV(NAME_focusFunction, "name*", IV_GET,
+     NAME_event, "Method that gets the keys while it succeeds"),
+  IV(NAME_searchString, "string*", IV_GET,
+     NAME_search, "What the incremental search is looking for"),
+  IV(NAME_searchDirection, "{forward,backward}", IV_GET,
+     NAME_search, "Direction of the incremental search"),
+  IV(NAME_searchWrappedWarned, "bool", IV_NONE,
+     NAME_search, "The search reported hitting the end of the buffer"),
+  IV(NAME_exactCase, "bool", IV_BOTH,
+     NAME_search, "Search is case sensitive"),
   IV(NAME_data, "alien:RlcData", IV_NONE,
      NAME_cache, "Line buffer and related data")
 };
@@ -1856,6 +2179,12 @@ static senddecl send_terminal_image[] =
      NAME_selection, "Make [from, to) the selection"),
   SM(NAME_scrollTo, 1, "index=int", scrollToTerminalImage,
      NAME_scroll, "Scroll the line holding index into view"),
+  SM(NAME_isearchForward, 0, NULL, isearchForwardTerminalImage,
+     NAME_search, "Start an incremental search towards the end"),
+  SM(NAME_isearchBackward, 0, NULL, isearchBackwardTerminalImage,
+     NAME_search, "Start an incremental search towards the start"),
+  SM(NAME_Isearch, 1, "event", IsearchTerminalImage,
+     NAME_search, "Focus function of an incremental search"),
   SM(NAME_send, 1, "text=char_array", sendTerminalImage,
      NAME_insert, "Send text to the connected process"),
   SM(NAME_insert, 1, "text=char_array", insertTerminalImage,
@@ -1924,6 +2253,11 @@ static classvardecl rc_terminal_image[] =
      UXWIN("style(background := yellow)",
 	   "@_select_style"),
      "Style for <-selection"),
+  RC(NAME_isearchStyle, "style*",
+     "style(background := green)",
+     "Style for the hit of an incremental search"),
+  RC(NAME_exactCase, "bool", "@off",
+     "Incremental search is case sensitive"),
   RC(NAME_nfdStyle, "style*", "@nil",
      "Style for NFD grapheme clusters (default off)"),
   RC(NAME_linkStyle, "style*",
@@ -3530,8 +3864,15 @@ rlc_paint_text(RlcData b,
   }
 
   if ( insel )					/* TBD: Cache */
-  { Any ofg = r_colour(ti->selection_style->colour);
-    Any obg = r_background(ti->selection_style->background);
+  { /* An incremental search shows its hit as the selection, but in a
+     * style of its own: what the search found is not what the user
+     * picked with the mouse, and telling the two apart is the whole
+     * feedback the search gives on the screen.
+     */
+    Style sel = ( rlc_isearching(b) && notNil(ti->isearch_style)
+		  ? ti->isearch_style : ti->selection_style );
+    Any ofg = r_colour(sel->colour);
+    Any obg = r_background(sel->background);
     int x0 = *cx;
     *cx += chars_columns(chars, len) * b->cw;
     r_clear(x0, ty-b->cb, *cx-x0, b->ch);
@@ -3752,7 +4093,10 @@ rlc_request_redraw(RlcData b)
 
 static bool
 rlc_normalise(RlcData b)
-{ if ( rlc_count_lines(b, b->window_start, b->caret_y) >= b->window_size )
+{ if ( rlc_isearching(b) )		/* the user is driving the view */
+    return false;
+
+  if ( rlc_count_lines(b, b->window_start, b->caret_y) >= b->window_size )
   { b->window_start = rlc_add_lines(b, b->caret_y, -(b->window_size-1));
     b->changed |= CHG_CARET|CHG_CLEAR|CHG_CHANGED;
     rlc_request_redraw(b);
@@ -4182,6 +4526,8 @@ rlc_resize(RlcData b, int w, int h)
 					      b->sel_start_char);
   rlc_textpos sel_end   = rlc_save_textpos(b, b->sel_end_line,
 					      b->sel_end_char);
+  rlc_textpos isearch   = rlc_save_textpos(b, b->isearch.origin_line,
+					      b->isearch.origin_char);
 
   b->window_size = h;
   b->width = w;
@@ -4278,6 +4624,8 @@ rlc_resize(RlcData b, int w, int h)
   rlc_restore_textpos(b, sel_org,   &b->sel_org_line,  &b->sel_org_char);
   rlc_restore_textpos(b, sel_start, &b->sel_start_line,&b->sel_start_char);
   rlc_restore_textpos(b, sel_end,   &b->sel_end_line,  &b->sel_end_char);
+  rlc_restore_textpos(b, isearch,   &b->isearch.origin_line,
+				    &b->isearch.origin_char);
 
   /* Clamp caret_x: typing at 80 cols can leave caret_x up to 80 in
    * the pending-wrap position; after shrinking to 25 cols the cap
@@ -4709,7 +5057,7 @@ rlc_caret_down(RlcData b, int arg)
   { if ( b->saved.lines )
     { rlc_shift_up(b, row-(b->window_size-1));
       b->caret_y = rlc_add_lines(b, b->window_start, b->window_size-1);
-    } else
+    } else if ( !rlc_isearching(b) )	/* the user is driving the view */
     { b->window_start = rlc_add_lines(b, b->caret_y, -(b->window_size-1));
       b->changed |= CHG_CHANGED|CHG_CLEAR;
     }
@@ -5782,7 +6130,12 @@ rlc_set_dec_mode(RlcData b, int mode)
        * normal one, which is then gone for good.
        */
       if ( !rlc_alt_screen(b) )
-      { rlc_save_screen(b);
+      { /* The lines an application replaces leave the ring, so there is
+	 * nothing left for a running search to find or scroll to.
+	 */
+	if ( rlc_isearching(b) )
+	  endIsearchTerminalImage(b->object, OFF);
+	rlc_save_screen(b);
 	rlc_erase_display(b);
       }
       break;
