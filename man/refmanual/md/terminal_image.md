@@ -32,6 +32,11 @@ keystrokes and hovered hyperlinks.
 - terminal_image<->selection_style: [style]
     `style` applied to selected cells.
 
+- terminal_image<->isearch_style: style*
+    `style` applied to the hit of an incremental search, in place of
+    `<-selection_style`, so that what a search found can be told from
+    what the user picked with the mouse.
+
 - terminal_image<->nfd_style: style*
     Style applied to NFD grapheme clusters (e.g. accented composed
     characters), or @nil to disable highlighting.
@@ -61,6 +66,20 @@ keystrokes and hovered hyperlinks.
 - terminal_image<->syntax: syntax_table
     Syntax table used for word boundaries in selection.
 
+- terminal_image<-focus_function: name*
+    Method that is sent every keystroke while it succeeds, ahead of
+    everything `->typed` normally does.  `@nil` unless an incremental
+    search is running.
+
+- terminal_image<-search_string: string*
+    What the incremental search is looking for, or `@nil`.
+
+- terminal_image<-search_direction: {forward,backward}
+    Direction the incremental search is going.
+
+- terminal_image<->exact_case: bool
+    Whether the incremental search is case sensitive.
+
 
 ## Send methods {#class-terminal_image-send}
 
@@ -86,6 +105,10 @@ keystrokes and hovered hyperlinks.
 - terminal_image->typed: event
     Process a single keystroke.  This takes these steps:
 
+    - If a focus function is active -- an incremental search -- the key
+      goes to it, and we are done if it succeeds.  This comes first:
+      the search would otherwise lose its keys to the accelerators
+      below, or to a process running on the terminal.
     - If the event has the `s` (super, Apple ⌘) or the event has both
       shift and control modifiers active _and_ the key is handled as
       an accelerator, we are done.
@@ -121,6 +144,43 @@ keystrokes and hovered hyperlinks.
 - terminal_image->copy_or_interrupt
     Copy if there is selected text, otherwise call `->interrupt`.
 
+- terminal_image->selection: from=[int], to=[int]
+    Make [from, to) the selection.  Both `@default` clears it, as does
+    an empty region; a single `@default` reaches to that end of the
+    buffer.  Indices out of range are clamped, and endpoints that
+    arrive the wrong way round are swapped.
+
+- terminal_image->scroll_to: index=int
+    Scroll the line holding `index` into view, moving as little as
+    possible and doing nothing while the line is already on the screen.
+    Fails on the alternate screen and on an index out of range.
+
+- terminal_image->isearch_forward
+- terminal_image->isearch_backward
+    Start an Emacs style incremental search, towards the end of the
+    buffer or towards its start.  `\C-\S-f` is bound to
+    `->isearch_backward`, as a terminal's history lies behind the
+    caret.  While the search runs it has every key (see
+    `<-focus_function`):
+
+    | `^S`, `^R`         | The next hit, forwards resp. backwards |
+    | `Backspace`        | Drop a character and search again |
+    | `^G`               | Give back the view and the selection the search started from |
+    | `Escape`, `Return` | Leave the search with the hit selected |
+    | Any other key      | Leaves the search, and then means what it usually means |
+
+    Two things differ from `editor->isearch_forward`.  `Escape` and
+    `Return` are swallowed rather than passed on: an unhandled key here
+    reaches the process on the terminal, and leaving a search is no
+    reason to submit a line to a shell.  `^C` is the exception that
+    proves it -- it ends the search and then interrupts, or a search
+    started over a running program would trap the interrupt.
+
+    Running out of hits only says so; the attempt after that starts
+    over at the far end of the buffer.  A search refuses to start on
+    the alternate screen, whose lines are not in the buffer, and an
+    application that claims the screen ends one that is running.
+
 - terminal_image->window_label: char_array
     Set the enclosing frame's label, e.g. from an OSC 0 sequence.
 
@@ -153,6 +213,23 @@ keystrokes and hovered hyperlinks.
 - terminal_image<-link: point|event -> name
     Hyperlink URL at the given position or under an event.
 
+- terminal_image<-find: from=int, for=string, times=[int], return=[{start,end}], exact_case=[bool], word=[bool] -> int
+    Search the buffer, as `text_buffer<-find` does and with the same
+    defaults: case sensitive, ignoring word boundaries, and -- note --
+    reporting the *end* of a match going forwards and its start going
+    back.  A negative `times` searches backwards.  `from` outside the
+    buffer is clamped to the nearest end.  Fails if there is no match.
+
+    Unlike `text_buffer<-find`, a repeat starts one character past the
+    match it found, so `times` greater than one reaches the hits after
+    the first.
+
+- terminal_image<-length: -> int
+    Number of characters in the buffer.
+
+- terminal_image<-contents: from=[int], size=[int] -> string
+    Text of the buffer from `from`.
+
 - terminal_image<-cwidth: code=int -> int
     Number of columns the code point `code` occupies when drawn in
     `<-font`: 0 for combining marks, 2 for wide characters and 1 for
@@ -164,11 +241,30 @@ keystrokes and hovered hyperlinks.
     while the terminal has no cell metrics yet.
 
 
+## Character indices {#class-terminal_image-indices}
+
+`<-find`, `<-length`, `<-contents`, `->selection` and `->scroll_to`
+address the buffer as a flat sequence of characters.  Index 0 is the
+first character of the oldest line still kept.  A wide character counts
+once, and the cell holding the right half of it not at all; a combining
+mark counts on its own.  Lines are separated by a single newline, except
+that a wrapped line and its continuation are not separated at all --
+`<-selected`, which hands text to another program, uses `\r\n` instead.
+
+**Indices are relative to the oldest line still kept and shift whenever
+output pushes lines out of the scroll-back.**  One is only good until the
+client writes again.  These methods do not see the alternate screen: the
+lines an application replaced left the buffer, and while it is up they
+see the scroll-back that came before it.
+
+
 ## Class variables {#class-terminal_image-classvars}
 
 - font, bold_font: default to `tt` and `boldtt`.
 - background, colour: default to `white` and `black`.
 - selection_style: yellow background (X) or system selection style.
+- isearch_style: green background.
+- exact_case: `@off`; the incremental search ignores case.
 - link_style, link_armed_style: blue, dotted/solid underline.
 - save_lines: 1000 by default.
 - auto_copy: copy selected text to clipboard automatically (default
