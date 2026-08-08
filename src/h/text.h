@@ -302,6 +302,7 @@ NewClass(terminal_image)
   Colour	background;		/* Background colour */
   Style		selection_style;	/* Style for selected text  */
   Style		isearch_style;		/* ... while searching for it */
+  Style		isearch_other_style;	/* ... and its other matches */
   Style		nfd_style;		/* Style for NFD grapheme clusters */
   Style		link_style;		/* Style for hyperlinks  */
   Style		link_armed_style;	/* Style for the hovered link  */

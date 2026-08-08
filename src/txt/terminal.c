@@ -405,6 +405,21 @@ static ssize_t	ucs_find(RlcData b, const uchar_t *text, size_t len,
 			 ssize_t here, PceString s, ssize_t times, char az,
 			 bool exact_case, bool word);
 
+typedef struct				/* A range of cells on a line; see */
+{ int line;				/* rlc_isearch_spans() */
+  int from;
+  int to;
+} rlc_span;
+
+#define MAX_ISEARCH_SPANS 256
+
+static int	rlc_overlay_width(RlcData b);
+static bool	rlc_line_in_selection(RlcData b, int line);
+static int	rlc_isearch_spans(RlcData b, rlc_span *spans, int max);
+static void	rlc_line_overlay(RlcData b, int line, RlcTextLine tl,
+				 bool insel, const rlc_span *spans,
+				 int nspans, Style *overlay);
+
 
 		 /*******************************
 		 *        DEBUG SUPPORT         *
@@ -1594,6 +1609,8 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
     assign(ti, search_wrapped_warned, OFF);
   }
 
+  rlc_request_redraw(b);		/* the other matches moved with it */
+
   if ( hit < 0 )
   { send(ti, NAME_report, NAME_warning, CtoName("Failing ISearch: %s"),
 	 ti->search_string, EAV);
@@ -1783,6 +1800,57 @@ getCursorPositionTerminalImage(TerminalImage ti)
  * so callers that reason in columns and rows -- the coordinate system
  * <-cursor_position and <-row already use -- need not know the font.
  */
+/* The style painted over a cell: the selection, the hit of an
+ * incremental search, one of its other matches, or the hyperlink under
+ * it.  Fails when the cell is drawn from its own attributes, which is
+ * to say from the colours and the bold or underline the client asked
+ * for.
+ *
+ * This goes through the very computation the painter does, so what it
+ * answers is what is on the screen rather than a second opinion about
+ * it.  Without it nothing outside the window can see a highlight at
+ * all, which leaves the whole of the feedback an incremental search
+ * gives beyond the reach of a test.
+ */
+
+static Style
+getCellStyleTerminalImage(TerminalImage ti, Int column, Int row)
+{ RlcData b = ti->data;
+  int c = valInt(column);
+  int r = valInt(row);
+
+  if ( r < 0 || r >= b->window_size || c < 0 || c >= rlc_overlay_width(b) )
+    fail;
+
+  int line = rlc_add_lines(b, b->window_start, r);
+  RlcTextLine tl = &b->lines[line];
+  rlc_span spans[MAX_ISEARCH_SPANS];
+  int nspans = rlc_isearch_spans(b, spans, MAX_ISEARCH_SPANS);
+  Style overlay[MAXLINE];
+
+  rlc_line_overlay(b, line, tl, rlc_line_in_selection(b, line),
+		   spans, nspans, overlay);
+  if ( overlay[c] )
+    answer(overlay[c]);
+
+  int cell = rlc_vcol_to_cell(tl, c);	/* a hyperlink, then? */
+  if ( tl->text && cell < tl->size && tl->text[cell].flags.link )
+  { for(href *hr = tl->links; hr; hr = hr->next)
+    { if ( cell >= hr->start && cell <= hr->start + hr->length )
+      { Style ls = ( hr == b->armed_href &&
+		     notNil(ti->link_armed_style) &&
+		     !isDefault(ti->link_armed_style)
+		     ? ti->link_armed_style : ti->link_style );
+	if ( notNil(ls) && !isDefault(ls) )
+	  answer(ls);
+	break;
+      }
+    }
+  }
+
+  fail;
+}
+
 static Int
 getColumnsTerminalImage(TerminalImage ti)
 { RlcData b = ti->data;
@@ -2038,6 +2106,12 @@ isearchStyleTerminalImage(TerminalImage ti, Style s)
 }
 
 static status
+isearchOtherStyleTerminalImage(TerminalImage ti, Style s)
+{ assign(ti, isearch_other_style, s);
+  return refreshTerminalImage(ti);
+}
+
+static status
 nfdStyleTerminalImage(TerminalImage ti, Style s)
 { assign(ti, nfd_style, s);
   return refreshTerminalImage(ti);
@@ -2149,6 +2223,8 @@ static char *T_contents[] =
 { "from=[int]", "size=[int]" };
 static char *T_selection[] =
 { "from=[int]", "to=[int]" };
+static char *T_cellStyle[] =
+{ "column=int", "row=int" };
 
 static vardecl var_terminal_image[] =
 { IV(NAME_bindings, "key_binding", IV_BOTH,
@@ -2164,6 +2240,9 @@ static vardecl var_terminal_image[] =
      NAME_appearance, "Feedback for the selection"),
   SV(NAME_isearchStyle, "style*", IV_GET|IV_STORE, isearchStyleTerminalImage,
      NAME_appearance, "Feedback for the hit of an incremental search"),
+  SV(NAME_isearchOtherStyle, "style*", IV_GET|IV_STORE,
+     isearchOtherStyleTerminalImage,
+     NAME_appearance, "Feedback for its other matches on the page"),
   SV(NAME_nfdStyle, "style*", IV_GET|IV_STORE, nfdStyleTerminalImage,
      NAME_appearance, "Style for NFD grapheme clusters (@nil to disable)"),
   SV(NAME_linkStyle, "style*", IV_GET|IV_STORE, linkStyleTerminalImage,
@@ -2291,6 +2370,9 @@ static getdecl get_terminal_image[] =
   GM(NAME_link, 1, "name", "point|event",
      getURLTerminalImage,
      NAME_selected, "Hyperlink content and location"),
+  GM(NAME_cellStyle, 2, "style", T_cellStyle,
+     getCellStyleTerminalImage,
+     NAME_appearance, "Style painted over a cell, if any"),
   GM(NAME_cwidth, 1, "int", "code=int",
      getCwidthTerminalImage,
      NAME_text, "Columns occupied by a code point in this font"),
@@ -2321,6 +2403,9 @@ static classvardecl rc_terminal_image[] =
   RC(NAME_isearchStyle, "style*",
      "style(background := green)",
      "Style for the hit of an incremental search"),
+  RC(NAME_isearchOtherStyle, "style*",
+     "style(background := pale_turquoise)",
+     "Style for its other matches on the page (@nil for none)"),
   RC(NAME_exactCase, "bool", "@off",
      "Incremental search is case sensitive"),
   RC(NAME_nfdStyle, "style*", "@nil",
@@ -3151,15 +3236,19 @@ rlc_copy(RlcData b, Name to)	/* NAME_clipboard or NAME_primary */
  * next thing the client writes.
  */
 
-/* Text of the whole buffer, plus the position of each character and
- * one more for the end.  Both are rlc_malloc()ed; the caller frees
+/* Text of the lines `from' .. `to', plus the position of each character
+ * and one more for the end.  Both are rlc_malloc()ed; the caller frees
  * them.  Returns NULL if we are out of memory.
+ *
+ * The whole buffer is what the index space is defined over; a range of
+ * it is what the painter wants, which only ever asks about the lines it
+ * is about to draw.
  */
 
 static uchar_t *
-rlc_buffer_text(RlcData b, size_t *lenp, rlc_pos **posp)
+rlc_text_between(RlcData b, int from, int to, size_t *lenp, rlc_pos **posp)
 { size_t len = 0;
-  int line = b->first;
+  int line = from;
 
   for(;;)				/* count first: one alloc, no realloc */
   { RlcTextLine tl = &b->lines[line];
@@ -3168,7 +3257,7 @@ rlc_buffer_text(RlcData b, size_t *lenp, rlc_pos **posp)
     { if ( tl->text[i].code )
 	len++;
     }
-    if ( line == b->last )
+    if ( line == to )
       break;
     if ( !tl->softreturn )
       len++;				/* the newline */
@@ -3184,7 +3273,7 @@ rlc_buffer_text(RlcData b, size_t *lenp, rlc_pos **posp)
   }
 
   size_t i = 0;
-  line = b->first;
+  line = from;
   for(;;)
   { RlcTextLine tl = &b->lines[line];
 
@@ -3196,7 +3285,7 @@ rlc_buffer_text(RlcData b, size_t *lenp, rlc_pos **posp)
 	i++;
       }
     }
-    if ( line == b->last )
+    if ( line == to )
     { pos[i].line = line;		/* the end: past the last cell */
       pos[i].cell = tl->size;
       break;
@@ -3215,6 +3304,11 @@ rlc_buffer_text(RlcData b, size_t *lenp, rlc_pos **posp)
   *lenp = len;
   *posp = pos;
   return text;
+}
+
+static uchar_t *
+rlc_buffer_text(RlcData b, size_t *lenp, rlc_pos **posp)
+{ return rlc_text_between(b, b->first, b->last, lenp, posp);
 }
 
 /* Where an index is, as a line and a cell.  An index that names a
@@ -3279,6 +3373,82 @@ ucs_match(RlcData b, const uchar_t *text, size_t len, ssize_t here,
  * repeat starts one character past the match it found: leaving `here`
  * on the hit made every repeat find the same place again.
  */
+
+/* Every place on the visible page where the search string occurs, as
+ * cell ranges: a match that crosses a wrap makes one of these per line.
+ *
+ * The painter asks for this while it draws, rather than the search
+ * keeping a list up to date.  A redraw walks the whole page anyway, so
+ * looking through the page for the search string as well costs a
+ * constant factor and no bookkeeping: nothing to invalidate when a line
+ * is recycled or the window rewrapped, and nothing left behind when the
+ * search ends.
+ */
+
+static int
+rlc_isearch_spans(RlcData b, rlc_span *spans, int max)
+{ TerminalImage ti = b->object;
+  int n = 0;
+
+  if ( !rlc_isearching(b) || isNil(ti->search_string) )
+    return 0;
+  size_t slen = valInt(getSizeCharArray(ti->search_string));
+  if ( slen == 0 )
+    return 0;
+
+  /* Back to the start of the logical line the page starts on and
+   * forward to the end of the one it ends on: a match that straddles a
+   * wrap is only found if both halves are there to be found.
+   */
+  int from = rlc_logical_start(b, b->window_start);
+  int to   = ( rlc_count_lines(b, b->window_start, b->last) < b->window_size
+	       ? b->last
+	       : rlc_add_lines(b, b->window_start, b->window_size-1) );
+  while( to != b->last && b->lines[to].softreturn )
+    to = NextLine(b, to);
+
+  size_t len;
+  rlc_pos *pos;
+  uchar_t *text = rlc_text_between(b, from, to, &len, &pos);
+  if ( !text )
+    return 0;
+
+  bool ec = ti->exact_case == ON;
+  ssize_t here = 0;
+
+  while( n < max )
+  { ssize_t hit = ucs_find(b, text, len, here, &ti->search_string->data,
+			   1, 'a', ec, false);
+    if ( hit < 0 )
+      break;
+
+    size_t end = hit + slen;
+    if ( end > len )
+      end = len;
+
+    for(size_t i=hit; i<end && n<max; )	/* one span per line it covers */
+    { int line  = pos[i].line;
+      int first = pos[i].cell;
+      int last  = first;
+
+      while( i < end && pos[i].line == line )
+      { last = pos[i].cell + 1;
+	i++;
+      }
+      spans[n].line = line;
+      spans[n].from = first;
+      spans[n].to   = rlc_snap_end(&b->lines[line], last);
+      n++;
+    }
+
+    here = hit + (ssize_t)slen;		/* matches do not overlap */
+  }
+
+  rlc_free(text);
+  rlc_free(pos);
+
+  return n;
+}
 
 static ssize_t
 ucs_find(RlcData b, const uchar_t *text, size_t len, ssize_t here,
@@ -3851,10 +4021,16 @@ effective_style_for(RlcData b, text_flags flags, bool armed)
 /** Draw a line of the terminal
  */
 
+/** Draw the visual columns [from, to) of a line.  `overlay' is a style
+ *  to paint the whole span in -- the selection, the hit of a search or
+ *  one of its other matches -- or NULL to draw each cell as its own
+ *  flags and any hyperlink under it say.
+ */
+
 static void
 rlc_paint_text(RlcData b,
 	       RlcTextLine tl, int from, int to,
-	       int ty, int *cx, bool insel)
+	       int ty, int *cx, Style overlay)
 { TerminalImage ti = b->object;
   text_char *chars, *s;
   text_char buf[MAXLINE];
@@ -3928,16 +4104,9 @@ rlc_paint_text(RlcData b,
     }
   }
 
-  if ( insel )					/* TBD: Cache */
-  { /* An incremental search shows its hit as the selection, but in a
-     * style of its own: what the search found is not what the user
-     * picked with the mouse, and telling the two apart is the whole
-     * feedback the search gives on the screen.
-     */
-    Style sel = ( rlc_isearching(b) && notNil(ti->isearch_style)
-		  ? ti->isearch_style : ti->selection_style );
-    Any ofg = r_colour(sel->colour);
-    Any obg = r_background(sel->background);
+  if ( overlay )				/* TBD: Cache */
+  { Any ofg = r_colour(overlay->colour);
+    Any obg = r_background(overlay->background);
     int x0 = *cx;
     *cx += chars_columns(chars, len) * b->cw;
     r_clear(x0, ty-b->cb, *cx-x0, b->ch);
@@ -4039,6 +4208,73 @@ rlc_paint_text(RlcData b,
   }
 }
 
+/* Which style, if any, is painted over each visual column of a line.
+ * The other matches of a running search go in first and the selection
+ * over them, so the hit the user is on wins where they meet.
+ *
+ * The selection is a range over lines rather than within one, so a line
+ * wholly inside it takes the style throughout; `insel' says whether the
+ * line the caller is about to fill in starts inside the selection.
+ */
+
+static int
+rlc_overlay_width(RlcData b)
+{ return b->width < MAXLINE ? b->width : MAXLINE;
+}
+
+/* Does the selection cover the whole of this line?  True for the lines
+ * between its ends; the ends themselves are covered from or up to a
+ * column and rlc_line_overlay() works those out for itself.
+ */
+
+static bool
+rlc_line_in_selection(RlcData b, int line)
+{ int n = rlc_count_lines(b, b->first, line);
+
+  return ( rlc_count_lines(b, b->first, b->sel_start_line) < n &&
+	   rlc_count_lines(b, b->first, b->sel_end_line)   > n );
+}
+
+static void
+rlc_line_overlay(RlcData b, int line, RlcTextLine tl, bool insel,
+		 const rlc_span *spans, int nspans, Style *overlay)
+{ TerminalImage ti = b->object;
+  Style sel = ( rlc_isearching(b) && notNil(ti->isearch_style)
+		? ti->isearch_style : ti->selection_style );
+  Style other = ti->isearch_other_style;
+  int width = rlc_overlay_width(b);
+  int from, to;				/* the selected columns */
+
+  if ( line == b->sel_start_line || line == b->sel_end_line )
+  { from = ( line == b->sel_start_line
+	     ? rlc_cell_to_vcol(tl, b->sel_start_char) : 0 );
+    to   = ( line == b->sel_end_line
+	     ? rlc_cell_to_vcol(tl, b->sel_end_char) : width );
+  } else if ( insel )			/* a line the selection spans whole */
+  { from = 0;
+    to   = width;
+  } else
+  { from = to = 0;
+  }
+
+  for(int c=0; c<width; c++)
+    overlay[c] = NULL;
+
+  if ( notNil(other) )
+  { for(int i=0; i<nspans; i++)
+    { if ( spans[i].line != line )
+	continue;
+      int f = rlc_cell_to_vcol(tl, spans[i].from);
+      int t = rlc_cell_to_vcol(tl, spans[i].to);
+      for(int c=f; c<t && c<width; c++)
+	overlay[c] = other;
+    }
+  }
+
+  for(int c=from; c<to && c<width; c++)
+    overlay[c] = sel;
+}
+
 static void
 rlc_redraw(RlcData b, int x, int y, int w, int h)
 { TerminalImage ti = b->object;
@@ -4046,13 +4282,9 @@ rlc_redraw(RlcData b, int x, int y, int w, int h)
   int el = b->window_size;
   int l = rlc_add_lines(b, b->window_start, sl);
   int pl = sl;				/* physical line */
-  bool insel = false;			/* selected lines? */
-
-  if ( rlc_count_lines(b, b->first, b->sel_start_line) <
-       rlc_count_lines(b, b->first, l) &&
-       rlc_count_lines(b, b->first, b->sel_end_line) >=
-       rlc_count_lines(b, b->first, l) )
-    insel = true;
+  rlc_span spans[MAX_ISEARCH_SPANS];
+  int nspans = rlc_isearch_spans(b, spans, MAX_ISEARCH_SPANS);
+  Style overlay[MAXLINE];
 
   r_background(ti->background);
 
@@ -4063,35 +4295,25 @@ rlc_redraw(RlcData b, int x, int y, int w, int h)
 
     r_clear(x, ty-b->cb, b->cw, b->ch); /* clear margin */
 
-					/* compute selection */
-    /* sel_{start,end}_char are CELL indices (consistent with caret_x and
-     * tl->text[] indexing in rlc_set_selection / rlc_read_from_window).
-     * rlc_paint_text takes VISUAL-COLUMN bounds, so convert here.  Without
-     * the conversion, NFD combining marks (own cell, width 0) make the cell
-     * index drift past the visual column, and the painted selection extends
-     * past where the user dragged. */
-    if ( l == b->sel_start_line )
-    { int cf = rlc_cell_to_vcol(tl, b->sel_start_char);
-      int ce = (b->sel_end_line != b->sel_start_line
-		  ? b->width
-		  : rlc_cell_to_vcol(tl, b->sel_end_char));
+    /* The selection and the matches of a search are ranges of CELLS
+     * (consistent with caret_x and tl->text[] indexing in
+     * rlc_set_selection / rlc_read_from_window) while rlc_paint_text
+     * takes VISUAL-COLUMN bounds, so rlc_line_overlay() converts.
+     * Without the conversion, NFD combining marks (own cell, width 0)
+     * make the cell index drift past the visual column, and what is
+     * painted extends past what was picked.
+     */
+    rlc_line_overlay(b, l, tl, rlc_line_in_selection(b, l),
+		     spans, nspans, overlay);
 
-      rlc_paint_text(b, tl,  0, cf, ty, &cx, insel);
-      insel = true;
-      rlc_paint_text(b, tl, cf, ce, ty, &cx, insel);
-      if ( l == b->sel_end_line )
-      { insel = false;
-	rlc_paint_text(b, tl, ce, b->width, ty, &cx, insel);
-      } else
-	insel = true;
-    } else if ( l == b->sel_end_line )	/* end of selection */
-    { int ce = rlc_cell_to_vcol(tl, b->sel_end_char);
+    int width = rlc_overlay_width(b);
+    for(int from=0; from<width; )	/* one call per run of one style */
+    { int to = from+1;
 
-      rlc_paint_text(b, tl, 0, ce, ty, &cx, insel);
-      insel = false;
-      rlc_paint_text(b, tl, ce, b->width, ty, &cx, insel);
-    } else				/* entire line in/out selection */
-    { rlc_paint_text(b, tl, 0, b->width, ty, &cx, insel);
+      while( to < width && overlay[to] == overlay[from] )
+	to++;
+      rlc_paint_text(b, tl, from, to, ty, &cx, overlay[from]);
+      from = to;
     }
 
 					/* clear remainder of line */

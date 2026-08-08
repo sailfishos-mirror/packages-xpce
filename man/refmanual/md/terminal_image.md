@@ -37,6 +37,13 @@ keystrokes and hovered hyperlinks.
     `<-selection_style`, so that what a search found can be told from
     what the user picked with the mouse.
 
+- terminal_image<->isearch_other_style: style*
+    `style` applied to the other matches of a running incremental
+    search that are on the screen, or `@nil` to leave them alone.  Only
+    the visible ones: they are worked out afresh every time the window
+    is painted, so scrolling brings the ones it reaches into view
+    without the search doing anything about it.
+
 - terminal_image<->nfd_style: style*
     Style applied to NFD grapheme clusters (e.g. accented composed
     characters), or @nil to disable highlighting.
@@ -163,6 +170,9 @@ keystrokes and hovered hyperlinks.
     caret.  While the search runs it has every key (see
     `<-focus_function`):
 
+    The hit is painted in `<-isearch_style` and the other matches on
+    the screen in `<-isearch_other_style`.
+
     | `^S`, `^R`         | The next hit, forwards resp. backwards |
     | `Backspace`        | Drop a character and search again |
     | `^W`               | Take the word behind the hit into the search string, along with whatever separates the two, so that pressing it again walks on word by word.  Not across a line: a search string with a line break in it matches almost nothing |
@@ -231,6 +241,17 @@ keystrokes and hovered hyperlinks.
 - terminal_image<-contents: from=[int], size=[int] -> string
     Text of the buffer from `from`.
 
+- terminal_image<-cell_style: column=int, row=int -> style
+    The style painted over the cell at `column` of the visible `row`:
+    the selection, the hit of an incremental search, one of its other
+    matches, or the hyperlink under it.  Fails when the cell is drawn
+    from its own attributes, which is to say from the colours and the
+    bold or underline the client asked for.
+
+    This goes through the very computation the painter does, so what it
+    answers is what is on the screen rather than a second opinion about
+    it.
+
 - terminal_image<-cwidth: code=int -> int
     Number of columns the code point `code` occupies when drawn in
     `<-font`: 0 for combining marks, 2 for wide characters and 1 for
@@ -265,6 +286,7 @@ see the scroll-back that came before it.
 - background, colour: default to `white` and `black`.
 - selection_style: yellow background (X) or system selection style.
 - isearch_style: green background.
+- isearch_other_style: pale turquoise background.
 - exact_case: `@off`; the incremental search ignores case.
 - link_style, link_armed_style: blue, dotted/solid underline.
 - save_lines: 1000 by default.

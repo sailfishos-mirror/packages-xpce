@@ -534,6 +534,53 @@ term_select(terminal(_, xpce(_, TI)), From, To) :-
 term_scroll_to(terminal(_, xpce(_, TI)), Index) :-
     send(TI, scroll_to, Index).
 
+%!  term_highlight(+T, +Row, -Marks) is det.
+%
+%   What is painted over each column of a visible row, as an atom of
+%   one character per column: `H' for the hit of an incremental search,
+%   `o' for one of its other matches, `S' for the selection and `.' for
+%   a cell drawn from its own attributes.  Trailing `.' are dropped, so
+%   a row with nothing on it comes back as ''.
+%
+%   <-cell_style is the only way in: the terminal hands out its text
+%   and its caret, and would otherwise say nothing at all about how any
+%   of it is painted.
+
+term_highlight(T, Row, Marks) :-
+    T = terminal(_, xpce(_, TI)),
+    term_cols(T, Cols),
+    Last is Cols-1,
+    findall(Mark,
+            ( between(0, Last, Col),
+              (   get(TI, cell_style, Col, Row, Style)
+              ->  highlight_mark(TI, Style, Mark)
+              ;   Mark = '.'
+              )
+            ),
+            All),
+    strip_trailing_dots(All, Marks0),
+    atomic_list_concat(Marks0, Marks).
+
+highlight_mark(TI, Style, Mark) :-
+    (   get(TI, isearch_style, Style)
+    ->  Mark = 'H'
+    ;   get(TI, isearch_other_style, Style)
+    ->  Mark = o
+    ;   get(TI, selection_style, Style)
+    ->  Mark = 'S'
+    ;   Mark = '?'
+    ).
+
+strip_trailing_dots(Marks, Stripped) :-
+    reverse(Marks, Reversed),
+    exclude_leading_dots(Reversed, Tail),
+    reverse(Tail, Stripped).
+
+exclude_leading_dots(['.'|T0], T) :-
+    !,
+    exclude_leading_dots(T0, T).
+exclude_leading_dots(T, T).
+
 %!  term_capability(+T, ?Cap) is nondet.
 %
 %   True when the backend supports Cap:
@@ -4038,10 +4085,14 @@ isearch_stop(T) :-
     ).
 
 %!  on_screen(+T, +Text) is semidet.
+%!  screen_row(+T, +Text, -Row) is semidet.
 %
-%   True when a visible row holds exactly Text.
+%   Row is the visible row that holds exactly Text.
 
 on_screen(T, Text) :-
+    screen_row(T, Text, _).
+
+screen_row(T, Text, Row) :-
     term_rows(T, Rows),
     Last is Rows-1,
     between(0, Last, Row),
@@ -4226,6 +4277,76 @@ test(isearch_control_w_stays_on_the_line,
     isearch_key(T, 0'W),
     term_selection(T, Selected),
     assertion(Selected == here).
+
+test(isearch_highlights_the_other_matches_on_the_page,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  The hit is one style and the rest another, so the eye can find
+    %  where else the thing is without walking the search there.
+    buffer(T, 'aa HIT bb HIT cc\r\nsecond HIT line'),
+    isearch(T),
+    isearch_type(T, 'HIT'),
+    term_highlight(T, 0, First),
+    term_highlight(T, 1, Second),
+    assertion(First  == '...ooo....ooo'),
+    assertion(Second == '.......HHH').
+
+test(isearch_highlight_follows_the_search_string,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'HIT one\r\nHITTER two'),
+    isearch(T),
+    isearch_type(T, 'HIT'),
+    term_highlight(T, 0, Three),
+    assertion(Three == ooo),
+    isearch_type(T, 'T'),                   % HITT: only the second line
+    term_highlight(T, 0, Four),
+    assertion(Four == ''),
+    isearch_named_key(T, 'BS'),             % and back again
+    term_highlight(T, 0, Again),
+    assertion(Again == ooo).
+
+test(isearch_highlight_goes_away_with_the_search,
+     [ setup(test_begin(T))
+     ]) :-
+    buffer(T, 'aa HIT bb HIT cc'),
+    isearch(T),
+    isearch_type(T, 'HIT'),
+    term_highlight(T, 0, Searching),
+    assertion(Searching \== ''),
+    isearch_key(T, 0'G),
+    term_highlight(T, 0, Done),
+    assertion(Done == '').
+
+test(isearch_highlights_only_the_page,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  A match in the scroll back is not painted, because it is not on
+    %  the screen; scrolling to it is what brings it into view, and the
+    %  painter looks again every time it draws.
+    buffer(T, 'HIT alpha\r\n'),
+    forall(between(1, 50, I), out(T, ['filler', I, '\r\n'])),
+    out(T, 'HIT omega\r\n'),
+    isearch(T),
+    isearch_type(T, 'HIT'),
+    assertion(on_screen(T, 'HIT omega')),
+    assertion(\+ on_screen(T, 'HIT alpha')),
+    forall(( term_rows(T, Rows),
+             Last is Rows-1,
+             between(0, Last, Row),
+             row_text(T, Row, Text),
+             Text \== 'HIT omega'
+           ),
+           ( term_highlight(T, Row, Marks),
+             assertion(Marks == '')
+           )),
+    isearch_key(T, 0'R),                    % now alpha is the page
+    screen_row(T, 'HIT alpha', AlphaRow),
+    term_highlight(T, AlphaRow, Alpha),
+    assertion(Alpha == 'HHH').
 
 test(isearch_refuses_the_alternate_screen,
      [ setup(test_begin(T)),
