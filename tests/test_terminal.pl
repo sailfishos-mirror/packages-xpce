@@ -4181,6 +4181,25 @@ test(isearch_wraps_after_a_warning,
     isearch_key(T, 0'R),
     assertion(on_screen(T, 'HIT omega')).   % and now it wraps
 
+test(isearch_backspace_stays_on_the_hit,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Backspace asks for a fresh look at the hit it is on, not for the
+    %  next one: what is shorter still matches where the longer thing
+    %  did, and the search has no business walking away from it.  The
+    %  two hits are a screenful apart, so the one on the screen says
+    %  which the search is on.
+    buffer(T, 'HIT alpha\r\n'),
+    forall(between(1, 50, I), out(T, ['filler', I, '\r\n'])),
+    out(T, 'HIT omega\r\n'),
+    isearch(T),
+    isearch_type(T, 'HIT o'),               % only omega has this
+    assertion(on_screen(T, 'HIT omega')),
+    isearch_named_key(T, 'BS'),             % `HIT ' still matches there
+    assertion(on_screen(T, 'HIT omega')),
+    assertion(\+ on_screen(T, 'HIT alpha')).
+
 test(isearch_control_w_takes_the_rest_of_the_word,
      [ setup(test_begin(T)),
        cleanup(isearch_stop(T))

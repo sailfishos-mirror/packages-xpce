@@ -1546,15 +1546,21 @@ endIsearchTerminalImage(TerminalImage ti, BoolObj keep)
 }
 
 /* One search step.  `chr' is a character to append to the search
- * string, or @default for a repeat; `from' overrides where to start,
- * which is what backspace needs after it shortened the string.
+ * string, or @default when the string is already what it should be.
+ *
+ * `repeat' says whether this asks for the *next* hit -- what ^S and ^R
+ * do -- rather than for a fresh look at where the current one is.
+ * Only a repeat steps off the hit; changing the search string, whether
+ * by typing, by backspace or by ^W, looks again at the place the hit
+ * already is, so a search stays where the user can see it for as long
+ * as it still matches there.
  *
  * The wrap follows Emacs and class editor: the first failure only says
  * so, and the attempt after it starts over at the far end.
  */
 
 static status
-executeIsearchTerminalImage(TerminalImage ti, Int chr, Int from)
+executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
 { RlcData b = ti->data;
   bool fwd = ti->search_direction == NAME_forward;
 
@@ -1576,9 +1582,7 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, Int from)
   if ( !text )
     fail;
 
-  ssize_t start = ( isDefault(from)
-		    ? rlc_isearch_start(b, pos, len, fwd, isDefault(chr))
-		    : valInt(from) );
+  ssize_t start = rlc_isearch_start(b, pos, len, fwd, repeat);
   ssize_t times = fwd ? 1 : -1;
   bool ec = ti->exact_case == ON;
   ssize_t hit = ucs_find(b, text, len, start, &ti->search_string->data,
@@ -1605,6 +1609,7 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, Int from)
     rlc_set_selection(b, ps.line, ps.cell, pe.line, pe.cell);
     send(ti, NAME_scrollTo, toInt(hit), EAV);
     reportIsearchTerminalImage(ti);
+    assign(ti, search_wrapped_warned, OFF); /* we are somewhere again */
   }
 
   rlc_free(text);
@@ -1624,9 +1629,7 @@ isearchBackwardTerminalImage(TerminalImage ti)
 
 /* Take the word behind the hit into the search string, the way ^W does
  * in Emacs: having found where something starts, this is how one asks
- * for the whole of it without typing it out.  Searches again from where
- * the hit begins, so the longer string stays on the same place if it
- * still matches there.
+ * for the whole of it without typing it out.
  */
 
 static status
@@ -1659,22 +1662,25 @@ extendIsearchToWordTerminalImage(TerminalImage ti)
   while( word >= 0 && (size_t)word < len && rlc_is_word_char(b, text[word]) )
     word++;
 
-  if ( word > gap )
+  bool grew = word > gap;
+  if ( grew )
   { for(ssize_t i=end; i<word; i++)
       insertCharacterString(ti->search_string, toInt(text[i]), DEFAULT, DEFAULT);
-  } else
-  { send(ti, NAME_report, NAME_warning,
-	 CtoName("No word behind the hit"), EAV);
-    start = -1;				/* leave the search as it was */
   }
 
   rlc_free(text);
   rlc_free(pos);
 
-  if ( start >= 0 )
-    return executeIsearchTerminalImage(ti, DEFAULT, toInt(start));
+  if ( !grew )
+  { /* Not the report's status: it fails when there is nowhere to show
+     * it, and a focus function that fails hands the key to the client.
+     */
+    send(ti, NAME_report, NAME_warning,
+	 CtoName("No word behind the hit"), EAV);
+    succeed;
+  }
 
-  succeed;
+  return executeIsearchTerminalImage(ti, DEFAULT, false);
 }
 
 /* Drop the last character of the search string, and say whether
@@ -1719,13 +1725,13 @@ IsearchTerminalImage(TerminalImage ti, EventObj ev)
 		 ? NAME_backward : NAME_forward );
 
     assign(ti, search_direction, dir);
-    return executeIsearchTerminalImage(ti, DEFAULT, DEFAULT);
+    return executeIsearchTerminalImage(ti, DEFAULT, true);
   }
 
   if ( cnm == NAME_backspace || ev->id == NAME_BS ||
        chr == Control('H') || chr == 127 )
   { if ( shortenIsearchTerminalImage(ti) )
-      return executeIsearchTerminalImage(ti, DEFAULT, DEFAULT);
+      return executeIsearchTerminalImage(ti, DEFAULT, false);
 
     rlc_set_selection(b, 0, 0, 0, 0);	/* nothing left to look for */
     reportIsearchTerminalImage(ti);
@@ -1743,7 +1749,7 @@ IsearchTerminalImage(TerminalImage ti, EventObj ev)
     return endIsearchTerminalImage(ti, ON);
 
   if ( chr >= ' ' && chr < META_OFFSET )
-    return executeIsearchTerminalImage(ti, toInt(chr), DEFAULT);
+    return executeIsearchTerminalImage(ti, toInt(chr), false);
 
   endIsearchTerminalImage(ti, ON);	/* let the key mean what it means */
   fail;
