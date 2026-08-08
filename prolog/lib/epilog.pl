@@ -1018,6 +1018,8 @@ initialise(T, Title:title=[name],
     send(T, slot, terminal, TI),
     send(T, display, SB),
     send(T, display, TI),
+    send(T, display, new(Bar, epilog_report)),  % after TI: it draws on top
+    send(Bar, displayed, @off),                 % ->display turned it on
     send(T, keyboard_focus, TI).
 
 resize(T) :->
@@ -1027,7 +1029,9 @@ resize(T) :->
     get(SB, width, SBW),
     send(SB, set, TW-SBW, 0, @default, TH),
     get(T, member, terminal, TI),
-    send(TI, set, 0, 0, TW-SBW, TH).
+    send(TI, set, 0, 0, TW-SBW, TH),
+    get(T, member, epilog_report, Bar),
+    send(Bar, place, 0, TH, TW-SBW).
 
 create(T) :->
     "Create the terminal and attach a Prolog thread to it"::
@@ -1059,7 +1063,103 @@ save_history(EW) :->
     get(EW, terminal, PT),
     save_history(PT).
 
+report(T, Type:name, Fmt:[char_array], Args:any ...) :->
+    "Show short messages on the bar over the terminal"::
+    (   report_on_bar(Type)
+    ->  get(T, member, epilog_report, Bar),
+        (   (Fmt == @default ; Fmt == '')
+        ->  send(Bar, hide)
+        ;   Format =.. [format, Fmt|Args],
+            new(S, string),
+            send(S, Format),
+            send(Bar, show, Type, S)
+        )
+    ;   Report =.. [report, Type, Fmt|Args],
+        send_super(T, Report)
+    ).
+
+%!  report_on_bar(+Type) is semidet.
+%
+%   Message kinds the bar takes.  The ones that ask something of the
+%   user, or that must not be missed, keep the dialog they had.
+
+report_on_bar(status).
+report_on_bar(warning).
+
 :- pce_end_class(epilog_window).
+
+
+                /*******************************
+                *          REPORT BAR          *
+                *******************************/
+
+:- pce_begin_class(epilog_report, device,
+                   "Transient bar for messages over the terminal").
+
+/** A place for `->report' messages that costs the terminal nothing
+    when there is nothing to say.
+
+    It has to be an overlay rather than a row of its own: the terminal
+    derives its size in characters from its size in pixels, so a bar
+    that took a row would resize the terminal, rewrap the whole
+    scroll-back, drop the scrolling region and send the process on it a
+    SIGWINCH -- on every keystroke of an incremental search.
+*/
+
+variable(timer, timer*, get, "Hides us again").
+
+class_variable(background,  colour, black,  "Colour behind the message").
+class_variable(colour,      colour, white,  "Colour of the message").
+class_variable(hide_after,  int,    5,      "Seconds a message stays up").
+
+initialise(R) :->
+    send_super(R, initialise),
+    get(R, class_variable_value, background, Background),
+    get(R, class_variable_value, colour, Colour),
+    send(R, display, new(B, box(100, 20))),
+    send(B, pen, 0),
+    send(B, fill, Background),
+    send(R, display, new(Text, text('', left)), point(6, 3)),
+    send(Text, colour, Colour).
+
+unlink(R) :->
+    send(R, stop_timer),
+    send_super(R, unlink).
+
+place(R, X:int, Bottom:int, Width:int) :->
+    "Put me at the bottom left of the area I cover"::
+    get(R, member, box, Box),
+    get(Box, height, H),
+    send(Box, width, Width),
+    send(R, set, X, Bottom-H).
+
+show(R, _Type:name, Message:string) :->
+    "Show Message and arrange to take it away again"::
+    get(R, member, text, Text),
+    send(Text, string, Message),
+    send(R, displayed, @on),
+    send(R, expose),
+    send(R, stop_timer),
+    get(R, class_variable_value, hide_after, Seconds),
+    send(R, slot, timer, new(Timer, timer(Seconds, message(R, hide)))),
+    send(Timer, start, once).
+
+hide(R) :->
+    "Take the message away"::
+    send(R, stop_timer),
+    send(R, displayed, @off).
+
+stop_timer(R) :->
+    "Forget the timer that would hide us"::
+    get(R, timer, Timer),
+    (   Timer == @nil
+    ->  true
+    ;   send(Timer, stop),
+        send(R, slot, timer, @nil),
+        free(Timer)
+    ).
+
+:- pce_end_class(epilog_report).
 
 
                 /*******************************
