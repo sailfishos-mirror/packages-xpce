@@ -165,6 +165,7 @@ keystrokes and hovered hyperlinks.
 
     | `^S`, `^R`         | The next hit, forwards resp. backwards |
     | `Backspace`        | Drop a character and search again |
+    | `^W`               | Take the word behind the hit into the search string, along with whatever separates the two, so that pressing it again walks on word by word.  Not across a line: a search string with a line break in it matches almost nothing |
     | `^G`               | Give back the view and the selection the search started from |
     | `Escape`, `Return` | Leave the search with the hit selected |
     | Any other key      | Leaves the search, and then means what it usually means |

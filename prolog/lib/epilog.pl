@@ -1072,7 +1072,15 @@ report(T, Type:name, Fmt:[char_array], Args:any ...) :->
         ;   Format =.. [format, Fmt|Args],
             new(S, string),
             send(S, Format),
-            send(Bar, show, Type, S)
+            %  A message from something that holds the keyboard -- an
+            %  incremental search -- is its prompt, not a remark: it
+            %  stays until that something says it is done.
+            get(T, member, terminal, TI),
+            (   get(TI, focus_function, @nil)
+            ->  Transient = @on
+            ;   Transient = @off
+            ),
+            send(Bar, show, Type, S, Transient)
         )
     ;   Report =.. [report, Type, Fmt|Args],
         send_super(T, Report)
@@ -1120,7 +1128,11 @@ initialise(R) :->
     send(B, pen, 0),
     send(B, fill, Background),
     send(R, display, new(Text, text('', left)), point(6, 3)),
-    send(Text, colour, Colour).
+    send(Text, colour, Colour),
+    %  The box must hold the text: my <-height is the union of the two,
+    %  and ->place puts my bottom on the bottom of the terminal.
+    get(Text, height, TextHeight),
+    send(B, height, TextHeight+6).
 
 unlink(R) :->
     send(R, stop_timer),
@@ -1129,20 +1141,23 @@ unlink(R) :->
 place(R, X:int, Bottom:int, Width:int) :->
     "Put me at the bottom left of the area I cover"::
     get(R, member, box, Box),
-    get(Box, height, H),
     send(Box, width, Width),
+    get(R, height, H),
     send(R, set, X, Bottom-H).
 
-show(R, _Type:name, Message:string) :->
-    "Show Message and arrange to take it away again"::
+show(R, _Type:name, Message:string, Transient:[bool]) :->
+    "Show Message, and take it away again unless it is a prompt"::
     get(R, member, text, Text),
     send(Text, string, Message),
     send(R, displayed, @on),
     send(R, expose),
     send(R, stop_timer),
-    get(R, class_variable_value, hide_after, Seconds),
-    send(R, slot, timer, new(Timer, timer(Seconds, message(R, hide)))),
-    send(Timer, start, once).
+    (   Transient == @off
+    ->  true                            % it stays until its mode is done
+    ;   get(R, class_variable_value, hide_after, Seconds),
+        send(R, slot, timer, new(Timer, timer(Seconds, message(R, hide)))),
+        send(Timer, start, once)
+    ).
 
 hide(R) :->
     "Take the message away"::

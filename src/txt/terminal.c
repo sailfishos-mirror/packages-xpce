@@ -355,6 +355,7 @@ static href    *rlc_href_at(RlcData b, int x, int y, int *l, int *c);
 static status	refreshTerminalImage(TerminalImage ti);
 static status	endIsearchTerminalImage(TerminalImage ti, BoolObj keep);
 static bool	rlc_isearching(RlcData b);
+static bool	rlc_is_word_char(RlcData b, int chr);
 static href    *rlc_add_link(RlcTextLine tl, const uchar_t *link,
 			     int start, int len);
 static void	rlc_free_link(RlcData b, href *hr);
@@ -1621,6 +1622,61 @@ isearchBackwardTerminalImage(TerminalImage ti)
 { return beginIsearchTerminalImage(ti, NAME_backward);
 }
 
+/* Take the word behind the hit into the search string, the way ^W does
+ * in Emacs: having found where something starts, this is how one asks
+ * for the whole of it without typing it out.  Searches again from where
+ * the hit begins, so the longer string stays on the same place if it
+ * still matches there.
+ */
+
+static status
+extendIsearchToWordTerminalImage(TerminalImage ti)
+{ RlcData b = ti->data;
+  size_t len;
+  rlc_pos *pos;
+  uchar_t *text;
+
+  if ( !rlc_has_selection(b) || isNil(ti->search_string) )
+    succeed;				/* nothing found to extend */
+
+  if ( !(text=rlc_buffer_text(b, &len, &pos)) )
+    fail;
+
+  ssize_t start = rlc_index_at(pos, len, b->sel_start_line, b->sel_start_char);
+  ssize_t end   = ( start < 0 ? (ssize_t)len
+		    : start + valInt(getSizeCharArray(ti->search_string)) );
+
+  /* Whatever separates the hit from the next word comes along with it,
+   * so that pressing this again walks on word by word.  Not across a
+   * line though: on a terminal a line is what things are written in,
+   * and a search string with a line break in it matches almost nothing.
+   */
+  ssize_t gap = end;
+  while( gap >= 0 && (size_t)gap < len &&
+	 text[gap] != '\n' && !rlc_is_word_char(b, text[gap]) )
+    gap++;
+  ssize_t word = gap;
+  while( word >= 0 && (size_t)word < len && rlc_is_word_char(b, text[word]) )
+    word++;
+
+  if ( word > gap )
+  { for(ssize_t i=end; i<word; i++)
+      insertCharacterString(ti->search_string, toInt(text[i]), DEFAULT, DEFAULT);
+  } else
+  { send(ti, NAME_report, NAME_warning,
+	 CtoName("No word behind the hit"), EAV);
+    start = -1;				/* leave the search as it was */
+  }
+
+  rlc_free(text);
+  rlc_free(pos);
+
+  if ( start >= 0 )
+    return executeIsearchTerminalImage(ti, DEFAULT, toInt(start));
+
+  succeed;
+}
+
 /* Drop the last character of the search string, and say whether
  * anything is left.
  */
@@ -1675,6 +1731,9 @@ IsearchTerminalImage(TerminalImage ti, EventObj ev)
     reportIsearchTerminalImage(ti);
     succeed;
   }
+
+  if ( chr == Control('W') )		/* take the rest of the word too */
+    return extendIsearchToWordTerminalImage(ti);
 
   if ( chr == Control('G') )		/* abort: give back view and hit */
     return endIsearchTerminalImage(ti, OFF);

@@ -1012,6 +1012,17 @@ alt_screen(T, Text) :-
 normal_screen(T) :-
     out(T, '\e[?1049l').
 
+%!  buffer(+T, +Text) is det.
+%
+%   Leave Text as the entire buffer, scroll back and all: ED 3 lets go
+%   of the saved lines and ED 2 of the window, which together start the
+%   ring over.  Without the first a test would see whatever the ones
+%   before it left behind.
+
+buffer(T, Text) :-
+    out(T, '\e[3J\e[H\e[2J'),
+    out(T, Text).
+
 %!  scrollback(+T, +N) is det.
 %
 %   Clear the screen and write N numbered lines.  N is more than the
@@ -3795,17 +3806,6 @@ test(edit_at_right_margin_stays_on_row,
                  cleanup(cleanup_unit)
                ]).
 
-%!  buffer(+T, +Text) is det.
-%
-%   Leave Text as the entire buffer, scroll back and all: ED 3 lets go
-%   of the saved lines and ED 2 of the window, which together start the
-%   ring over.  Without the first the tests would search whatever the
-%   ones before them left behind.
-
-buffer(T, Text) :-
-    out(T, '\e[3J\e[H\e[2J'),
-    out(T, Text).
-
 %!  three_lines(+T) is det.
 %
 %   `hello', `world' and `hello again', which give two occurrences of
@@ -4166,8 +4166,7 @@ test(isearch_wraps_after_a_warning,
     %  after that starts over at the far end.  The two hits are a
     %  screenful apart, so which one the search is on is the one that
     %  is on the screen.
-    out(T, '\e[3J\e[H\e[2J'),
-    out(T, 'HIT alpha\r\n'),
+    buffer(T, 'HIT alpha\r\n'),
     forall(between(1, 50, I), out(T, ['filler', I, '\r\n'])),
     out(T, 'HIT omega\r\n'),
     isearch(T),
@@ -4181,6 +4180,33 @@ test(isearch_wraps_after_a_warning,
     assertion(on_screen(T, 'HIT alpha')),   % nothing left: it only warns
     isearch_key(T, 0'R),
     assertion(on_screen(T, 'HIT omega')).   % and now it wraps
+
+test(isearch_control_w_takes_the_rest_of_the_word,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'the terminal image is here\r\nand something else'),
+    isearch(T),
+    isearch_type(T, ter),
+    isearch_key(T, 0'W),
+    term_selection(T, Word),
+    assertion(Word == terminal),
+    isearch_key(T, 0'W),                % again: on to the next word
+    term_selection(T, Two),
+    assertion(Two == 'terminal image').
+
+test(isearch_control_w_stays_on_the_line,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  A search string with a line break in it matches almost nothing,
+    %  so the word behind the last one on a line is not a word to take.
+    buffer(T, 'the terminal image is here\r\nand something else'),
+    isearch(T),
+    isearch_type(T, here),
+    isearch_key(T, 0'W),
+    term_selection(T, Selected),
+    assertion(Selected == here).
 
 test(isearch_refuses_the_alternate_screen,
      [ setup(test_begin(T)),
