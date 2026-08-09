@@ -411,7 +411,7 @@ typedef struct				/* A range of cells on a line; see */
   int to;
 } rlc_span;
 
-#define MAX_ISEARCH_SPANS 256
+#define MAX_ISEARCH_SPANS 512
 
 static int	rlc_overlay_width(RlcData b);
 static bool	rlc_line_in_selection(RlcData b, int line);
@@ -1508,11 +1508,48 @@ rlc_isearch_start(RlcData b, const rlc_pos *pos, size_t len,
 }
 
 static void
-reportIsearchTerminalImage(TerminalImage ti)
+reportIsearchTerminalImage(TerminalImage ti, int index, int total)
 { StringObj s = ti->search_string;
 
-  send(ti, NAME_report, NAME_status, CtoName("ISearch %s: %s"),
-       ti->search_direction, isNil(s) ? (Any)CtoName("") : (Any)s, EAV);
+  if ( total > 0 )
+    send(ti, NAME_report, NAME_status, CtoName("ISearch %s: %s (%d/%d)"),
+	 ti->search_direction, s, toInt(index), toInt(total), EAV);
+  else
+    send(ti, NAME_report, NAME_status, CtoName("ISearch %s: %s"),
+	 ti->search_direction, isNil(s) ? (Any)CtoName("") : (Any)s, EAV);
+}
+
+/* Which of the buffer's matches `hit' is, and how many there are.
+ * Counted from the start of the buffer whichever way the search is
+ * going, so that `3/4' says the third of four places rather than the
+ * third one looked at, and walking back through them counts down.
+ *
+ * Every position the string occurs at counts, overlapping ones
+ * included: a repeat steps a single character, so those are places the
+ * user can get to and would otherwise be missing from the tally.
+ *
+ * The whole buffer, not the page: what the number is for is knowing
+ * how much there is to walk through, and most of it is off the screen.
+ */
+
+static int
+rlc_isearch_count(RlcData b, const uchar_t *text, size_t len, PceString str,
+		  bool exact_case, ssize_t hit, int *index)
+{ int total = 0;
+  ssize_t at = 0;
+
+  *index = 0;
+  for(;;)
+  { at = ucs_find(b, text, len, at, str, 1, 'a', exact_case, false);
+    if ( at < 0 )
+      break;
+    total++;
+    if ( at == hit )
+      *index = total;
+    at++;
+  }
+
+  return total;
 }
 
 static status
@@ -1537,7 +1574,7 @@ beginIsearchTerminalImage(TerminalImage ti, Name direction)
   b->isearch.window_start = b->window_start;
 
   rlc_set_selection(b, 0, 0, 0, 0);
-  reportIsearchTerminalImage(ti);
+  reportIsearchTerminalImage(ti, 0, 0);
 
   succeed;
 }
@@ -1603,7 +1640,7 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
 
   if ( isNil(ti->search_string) ||
        valInt(getSizeCharArray(ti->search_string)) == 0 )
-  { reportIsearchTerminalImage(ti);
+  { reportIsearchTerminalImage(ti, 0, 0);
     succeed;
   }
 
@@ -1646,9 +1683,13 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
     rlc_pos ps = rlc_pos_start(b, text, pos, len, hit);
     rlc_pos pe = rlc_pos_end(pos, end);
 
+    int index;
+    int total = rlc_isearch_count(b, text, len, &ti->search_string->data,
+				  ec, hit, &index);
+
     rlc_set_selection(b, ps.line, ps.cell, pe.line, pe.cell);
     send(ti, NAME_scrollTo, toInt(hit), EAV);
-    reportIsearchTerminalImage(ti);
+    reportIsearchTerminalImage(ti, index, total);
     assign(ti, search_wrapped_warned, OFF); /* we are somewhere again */
     if ( repeat )			/* asked to move on, so we did: the */
     { b->isearch.base_line = ps.line;	/* string is looked up from here now */
@@ -1778,7 +1819,7 @@ IsearchTerminalImage(TerminalImage ti, EventObj ev)
       return executeIsearchTerminalImage(ti, DEFAULT, false);
 
     rlc_set_selection(b, 0, 0, 0, 0);	/* nothing left to look for */
-    reportIsearchTerminalImage(ti);
+    reportIsearchTerminalImage(ti, 0, 0);
     succeed;
   }
 
@@ -3467,14 +3508,21 @@ rlc_isearch_spans(RlcData b, rlc_span *spans, int max)
       { last = pos[i].cell + 1;
 	i++;
       }
-      spans[n].line = line;
-      spans[n].from = first;
-      spans[n].to   = rlc_snap_end(&b->lines[line], last);
-      n++;
+      last = rlc_snap_end(&b->lines[line], last);
+
+      if ( n > 0 && spans[n-1].line == line && first <= spans[n-1].to )
+      { if ( last > spans[n-1].to )	/* runs into the one before it */
+	  spans[n-1].to = last;
+      } else
+      { spans[n].line = line;
+	spans[n].from = first;
+	spans[n].to   = last;
+	n++;
+      }
     }
 
-    here = hit + (ssize_t)slen;		/* matches do not overlap */
-  }
+    here = hit+1;			/* every place it occurs, as the */
+  }					/* count does; see rlc_isearch_count() */
 
   rlc_free(text);
   rlc_free(pos);

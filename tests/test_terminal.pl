@@ -534,6 +534,19 @@ term_select(terminal(_, xpce(_, TI)), From, To) :-
 term_scroll_to(terminal(_, xpce(_, TI)), Index) :-
     send(TI, scroll_to, Index).
 
+%!  term_report(+T, -Text) is semidet.
+%
+%   What the window is showing on its report bar.  That is where an
+%   incremental search says what it is looking for and how many of them
+%   there are, and it is the only place any of it can be read back.
+
+term_report(terminal(_, xpce(_, TI)), Text) :-
+    get(TI, device, Window),
+    get(Window, member, epilog_report, Bar),
+    get(Bar, member, text, Item),
+    get(Item, string, String),
+    get(String, value, Text).
+
 %!  term_highlight(+T, +Row, -Marks) is det.
 %
 %   What is painted over each column of a visible row, as an atom of
@@ -4289,6 +4302,48 @@ test(isearch_backspace_returns_to_the_last_repeat,
     isearch_named_key(T, 'BS'),
     term_highlight(T, 1, Back),
     assertion(Back == 'HHH').               % back to where ^R left it
+
+test(isearch_counts_the_matches,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Which of them we are on and how many there are, counted from the
+    %  start of the buffer whichever way the search is going -- so a
+    %  search backwards starts at the last of them and counts down.
+    buffer(T, 'format\r\nforall\r\nformat\r\nformat'),
+    isearch(T),
+    isearch_type(T, for),
+    term_report(T, Last),
+    assertion(sub_atom(Last, _, _, _, '(4/4)')),
+    isearch_key(T, 0'R),
+    term_report(T, Third),
+    assertion(sub_atom(Third, _, _, _, '(3/4)')),
+    isearch_type(T, a),                     % `fora': only `forall' has it
+    term_report(T, Only),
+    assertion(sub_atom(Only, _, _, _, '(1/1)')).
+
+test(isearch_counts_overlapping_matches,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  A repeat steps a single character, so a match that overlaps the
+    %  one before it is a place the search can get to and has to be in
+    %  the tally.
+    buffer(T, 'aaaa'),
+    isearch(T),
+    isearch_type(T, aa),
+    term_report(T, Report),
+    assertion(sub_atom(Report, _, _, _, '(3/3)')).
+
+test(isearch_counts_nothing_when_it_finds_nothing,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'format\r\nforall'),
+    isearch(T),
+    isearch_type(T, 'nowhere'),
+    term_report(T, Report),
+    assertion(\+ sub_atom(Report, _, _, _, '/')).
 
 test(isearch_control_w_takes_the_rest_of_the_word,
      [ setup(test_begin(T)),

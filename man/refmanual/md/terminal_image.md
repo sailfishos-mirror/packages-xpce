@@ -171,7 +171,14 @@ keystrokes and hovered hyperlinks.
     `<-focus_function`):
 
     The hit is painted in `<-isearch_style` and the other matches on
-    the screen in `<-isearch_other_style`.
+    the screen in `<-isearch_other_style`.  What it reports as it goes
+    -- through `->report`, so where that lands is the window's business
+    -- says which of the matches it is on and how many there are, as
+    `(3/4)`.  Those are counted over the whole buffer, and from its
+    start whichever way the search is going, so a search backwards
+    begins at the last of them and counts down.  Every place the string
+    occurs counts, overlapping ones included: a repeat steps a single
+    character, so those are places the search can get to.
 
     | `^S`, `^R`         | The next hit, forwards resp. backwards |
     | `Backspace`        | Drop a character and search again |
