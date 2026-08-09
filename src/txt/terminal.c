@@ -1460,14 +1460,22 @@ rlc_index_at(const rlc_pos *pos, size_t len, int line, int cell)
   return -1;
 }
 
-/* Where the next search step starts.  Everything is measured from
- * where the current hit begins: extending the search string looks
- * there again, so what is on the screen stays there as long as it
- * still matches, and a repeat steps one character off it, which is
- * what makes it move on rather than find what it is standing on.
- * Stepping off the end of the hit instead would not do for a search
- * going backwards -- the match starts before that and would be found
- * all over again.  With no hit yet we are where the search started.
+/* Where the next search step starts.
+ *
+ * A repeat steps one character off the hit it is on, which is what
+ * makes it move on rather than find what it is standing on.  Off the
+ * *start* of the hit: a match going backwards begins before its end
+ * and would be found all over again.
+ *
+ * Everything that changes the search string starts from the base
+ * instead, which is where the search began or, once it has been
+ * repeated, the hit that repeat landed on.  So the hit for a string is
+ * the first one from the base, whatever order the characters were
+ * typed and deleted in.  Looking from the current hit instead would
+ * make deleting a character keep whatever the search had walked to:
+ * type `fora' over `format ... forall ... format' and the hit leaves
+ * the format it was narrowing down for the forall behind it; deleting
+ * the `a' has to give that format back.
  */
 
 static ssize_t
@@ -1475,11 +1483,15 @@ rlc_isearch_start(RlcData b, const rlc_pos *pos, size_t len,
 		  bool fwd, bool repeat)
 { ssize_t start;
 
-  if ( rlc_has_selection(b) )
-    start = rlc_index_at(pos, len, b->sel_start_line, b->sel_start_char);
-  else
-    start = rlc_index_at(pos, len,
-			 b->isearch.origin_line, b->isearch.origin_char);
+  if ( repeat )				/* one on from the hit we are on */
+  { start = ( rlc_has_selection(b)
+	      ? rlc_index_at(pos, len, b->sel_start_line, b->sel_start_char)
+	      : rlc_index_at(pos, len,
+			     b->isearch.base_line, b->isearch.base_char) );
+  } else				/* the first hit from the base */
+  { start = rlc_index_at(pos, len,
+			 b->isearch.base_line, b->isearch.base_char);
+  }
 
   if ( start < 0 )			/* scrolled out from under us */
     return fwd ? 0 : (ssize_t)len;
@@ -1520,6 +1532,8 @@ beginIsearchTerminalImage(TerminalImage ti, Name direction)
 
   b->isearch.origin_line  = b->caret_y;
   b->isearch.origin_char  = b->caret_x;
+  b->isearch.base_line    = b->caret_y;
+  b->isearch.base_char    = b->caret_x;
   b->isearch.window_start = b->window_start;
 
   rlc_set_selection(b, 0, 0, 0, 0);
@@ -1627,6 +1641,10 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
     send(ti, NAME_scrollTo, toInt(hit), EAV);
     reportIsearchTerminalImage(ti);
     assign(ti, search_wrapped_warned, OFF); /* we are somewhere again */
+    if ( repeat )			/* asked to move on, so we did: the */
+    { b->isearch.base_line = ps.line;	/* string is looked up from here now */
+      b->isearch.base_char = ps.cell;
+    }
   }
 
   rlc_free(text);
@@ -4815,6 +4833,8 @@ rlc_resize(RlcData b, int w, int h)
 					      b->sel_end_char);
   rlc_textpos isearch   = rlc_save_textpos(b, b->isearch.origin_line,
 					      b->isearch.origin_char);
+  rlc_textpos isbase    = rlc_save_textpos(b, b->isearch.base_line,
+					      b->isearch.base_char);
 
   b->window_size = h;
   b->width = w;
@@ -4913,6 +4933,8 @@ rlc_resize(RlcData b, int w, int h)
   rlc_restore_textpos(b, sel_end,   &b->sel_end_line,  &b->sel_end_char);
   rlc_restore_textpos(b, isearch,   &b->isearch.origin_line,
 				    &b->isearch.origin_char);
+  rlc_restore_textpos(b, isbase,    &b->isearch.base_line,
+				    &b->isearch.base_char);
 
   /* Clamp caret_x: typing at 80 cols can leave caret_x up to 80 in
    * the pending-wrap position; after shrinking to 25 cols the cap

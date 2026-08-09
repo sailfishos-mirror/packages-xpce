@@ -4236,10 +4236,10 @@ test(isearch_backspace_stays_on_the_hit,
      [ setup(test_begin(T)),
        cleanup(isearch_stop(T))
      ]) :-
-    %  Backspace asks for a fresh look at the hit it is on, not for the
-    %  next one: what is shorter still matches where the longer thing
-    %  did, and the search has no business walking away from it.  The
-    %  two hits are a screenful apart, so the one on the screen says
+    %  Backspace looks again from where the search is looking from, not
+    %  one on from the hit: what is shorter still matches where the
+    %  longer thing did, and the search has no business walking past it.
+    %  The two hits are a screenful apart, so the one on the screen says
     %  which the search is on.
     buffer(T, 'HIT alpha\r\n'),
     forall(between(1, 50, I), out(T, ['filler', I, '\r\n'])),
@@ -4250,6 +4250,45 @@ test(isearch_backspace_stays_on_the_hit,
     isearch_named_key(T, 'BS'),             % `HIT ' still matches there
     assertion(on_screen(T, 'HIT omega')),
     assertion(\+ on_screen(T, 'HIT alpha')).
+
+test(isearch_backspace_gives_back_what_narrowing_took,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Narrowing walks the hit away from what it was standing on as
+    %  soon as that no longer matches; widening again has to give it
+    %  back, rather than keeping whatever the longer string reached.
+    buffer(T, 'format\r\nforall\r\nformat'),
+    isearch(T),
+    isearch_type(T, for),
+    term_highlight(T, 2, Third),
+    assertion(Third == 'HHH'),              % the last one, going back
+    isearch_type(T, a),
+    term_highlight(T, 1, Middle),
+    assertion(Middle == 'HHHH'),            % only `forall' has `fora'
+    isearch_named_key(T, 'BS'),
+    term_highlight(T, 2, Back),
+    assertion(Back == 'HHH').
+
+test(isearch_backspace_returns_to_the_last_repeat,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  ... but no further back than the last ^S or ^R: a repeat is the
+    %  user saying "not that one, the next", and backspace is not an
+    %  undo of that.
+    buffer(T, 'format\r\nforall\r\nformat'),
+    isearch(T),
+    isearch_type(T, for),
+    isearch_key(T, 0'R),                    % on to `forall'
+    term_highlight(T, 1, Middle),
+    assertion(Middle == 'HHH'),
+    isearch_type(T, m),                     % `form': not there any more
+    term_highlight(T, 0, First),
+    assertion(First == 'HHHH'),
+    isearch_named_key(T, 'BS'),
+    term_highlight(T, 1, Back),
+    assertion(Back == 'HHH').               % back to where ^R left it
 
 test(isearch_control_w_takes_the_rest_of_the_word,
      [ setup(test_begin(T)),
