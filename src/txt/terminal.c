@@ -1557,6 +1557,8 @@ endIsearchTerminalImage(TerminalImage ti, BoolObj keep)
   assign(ti, focus_function, NIL);
   assign(ti, search_string,  NIL);
 
+  b->changed |= CHG_CHANGED;		/* the matches all over the page go */
+
   if ( keep == OFF )
   { rlc_set_selection(b, 0, 0, 0, 0);
     /* Only if the line we started from is still in the ring: output
@@ -1623,7 +1625,14 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
     assign(ti, search_wrapped_warned, OFF);
   }
 
-  rlc_request_redraw(b);		/* the other matches moved with it */
+  /* Every line on the page can hold a match, and a redraw otherwise
+   * repaints only the lines that say they changed -- which for a
+   * search step is just the two the hit moved between.  The rest kept
+   * whatever they were painted with, so matches went unpainted and old
+   * ones stayed.
+   */
+  b->changed |= CHG_CHANGED;
+  rlc_request_redraw(b);
 
   if ( hit < 0 )
   { send(ti, NAME_report, NAME_warning, CtoName("Failing ISearch: %s"),
@@ -3396,11 +3405,16 @@ ucs_match(RlcData b, const uchar_t *text, size_t len, ssize_t here,
  * cell ranges: a match that crosses a wrap makes one of these per line.
  *
  * The painter asks for this while it draws, rather than the search
- * keeping a list up to date.  A redraw walks the whole page anyway, so
- * looking through the page for the search string as well costs a
- * constant factor and no bookkeeping: nothing to invalidate when a line
- * is recycled or the window rewrapped, and nothing left behind when the
- * search ends.
+ * keeping a list up to date.  A redraw walks every row of the page
+ * anyway, so looking through the page for the search string as well
+ * costs a constant factor and no bookkeeping: nothing to invalidate
+ * when a line is recycled or the window rewrapped, and nothing left
+ * behind when the search ends.
+ *
+ * What it does cost is the damage.  A redraw only *paints* the lines
+ * that say they changed, and a match can be on any of them, so a
+ * search step marks the whole window changed (see
+ * executeIsearchTerminalImage()).
  */
 
 static int

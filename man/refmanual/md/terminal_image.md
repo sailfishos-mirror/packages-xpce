@@ -248,9 +248,10 @@ keystrokes and hovered hyperlinks.
     from its own attributes, which is to say from the colours and the
     bold or underline the client asked for.
 
-    This goes through the very computation the painter does, so what it
-    answers is what is on the screen rather than a second opinion about
-    it.
+    This goes through the very computation the painter uses, so it is
+    not a second opinion about what should be drawn.  It says nothing
+    about what has actually been drawn yet: a cell whose line has not
+    been repainted since still shows what it showed before.
 
 - terminal_image<-cwidth: code=int -> int
     Number of columns the code point `code` occupies when drawn in
