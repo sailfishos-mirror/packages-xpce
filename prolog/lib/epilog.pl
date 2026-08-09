@@ -1108,7 +1108,7 @@ report_on_bar(warning).
 :- pce_begin_class(epilog_report, device,
                    "Transient bar for messages over the terminal").
 
-/** A place for `->report' messages that costs the terminal nothing
+/*  A place for `->report' messages that costs the terminal nothing
     when there is nothing to say.
 
     It has to be an overlay rather than a row of its own: the terminal
@@ -1134,10 +1134,10 @@ initialise(R) :->
     send(B, fill, Background),
     send(R, display, new(Text, text('', left)), point(6, 3)),
     send(Text, colour, Colour),
-    send(R, display, new(Menu, menu(search_options, toggle,
+    send(R, display, new(Menu, menu(search_options, marked,
                                     message(R, option, @arg1, @arg2)))),
     send(Menu, multiple_selection, @on),
-    send(Menu, show_label, @off),
+    send(Menu, label, 'Match:'),
     send(Menu, layout, horizontal),
     send(Menu, gap, size(10, 0)),
     send(Menu, colour, Colour),
