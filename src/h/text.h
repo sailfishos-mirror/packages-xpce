@@ -317,6 +317,7 @@ NewClass(terminal_image)
   Name		search_direction;	/* Direction of the search */
   BoolObj	search_wrapped_warned;	/* Search hit the end of the buffer */
   BoolObj	exact_case;		/* Search is case sensitive */
+  BoolObj	search_word;		/* Search matches whole words */
   struct rlc_data *data;		/* The buffered data */
 End;
 

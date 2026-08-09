@@ -1534,13 +1534,13 @@ reportIsearchTerminalImage(TerminalImage ti, int index, int total)
 
 static int
 rlc_isearch_count(RlcData b, const uchar_t *text, size_t len, PceString str,
-		  bool exact_case, ssize_t hit, int *index)
+		  bool exact_case, bool word, ssize_t hit, int *index)
 { int total = 0;
   ssize_t at = 0;
 
   *index = 0;
   for(;;)
-  { at = ucs_find(b, text, len, at, str, 1, 'a', exact_case, false);
+  { at = ucs_find(b, text, len, at, str, 1, 'a', exact_case, word);
     if ( at < 0 )
       break;
     total++;
@@ -1653,12 +1653,13 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
   ssize_t start = rlc_isearch_start(b, pos, len, fwd, repeat);
   ssize_t times = fwd ? 1 : -1;
   bool ec = ti->exact_case == ON;
+  bool wm = ti->search_word == ON;
   ssize_t hit = ucs_find(b, text, len, start, &ti->search_string->data,
-			 times, 'a', ec, false);
+			 times, 'a', ec, wm);
 
   if ( hit < 0 && ti->search_wrapped_warned == ON )
   { hit = ucs_find(b, text, len, fwd ? 0 : (ssize_t)len,
-		   &ti->search_string->data, times, 'a', ec, false);
+		   &ti->search_string->data, times, 'a', ec, wm);
     assign(ti, search_wrapped_warned, OFF);
   }
 
@@ -1685,7 +1686,7 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
 
     int index;
     int total = rlc_isearch_count(b, text, len, &ti->search_string->data,
-				  ec, hit, &index);
+				  ec, wm, hit, &index);
 
     rlc_set_selection(b, ps.line, ps.cell, pe.line, pe.cell);
     send(ti, NAME_scrollTo, toInt(hit), EAV);
@@ -1700,6 +1701,31 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
   rlc_free(text);
   rlc_free(pos);
   succeed;
+}
+
+/* The two things that decide what counts as a match.  Changing one
+ * while a search is running looks again from where it is looking from,
+ * so the hit, the tally and what is painted all follow at once.
+ */
+
+static status
+searchAgainTerminalImage(TerminalImage ti)
+{ if ( rlc_isearching(ti->data) && notNil(ti->search_string) )
+    return executeIsearchTerminalImage(ti, DEFAULT, false);
+
+  succeed;
+}
+
+static status
+exactCaseTerminalImage(TerminalImage ti, BoolObj exact)
+{ assign(ti, exact_case, exact);
+  return searchAgainTerminalImage(ti);
+}
+
+static status
+searchWordTerminalImage(TerminalImage ti, BoolObj word)
+{ assign(ti, search_word, word);
+  return searchAgainTerminalImage(ti);
 }
 
 static status
@@ -1825,6 +1851,13 @@ IsearchTerminalImage(TerminalImage ti, EventObj ev)
 
   if ( chr == Control('W') )		/* take the rest of the word too */
     return extendIsearchToWordTerminalImage(ti);
+
+  if ( valInt(ev->buttons) & BUTTON_meta )
+  { if ( chr == 'c' )			/* what counts as a match */
+      return exactCaseTerminalImage(ti, ti->exact_case == ON ? OFF : ON);
+    if ( chr == 'w' )
+      return searchWordTerminalImage(ti, ti->search_word == ON ? OFF : ON);
+  }
 
   if ( chr == Control('G') )		/* abort: give back view and hit */
     return endIsearchTerminalImage(ti, OFF);
@@ -2338,8 +2371,10 @@ static vardecl var_terminal_image[] =
      NAME_search, "Direction of the incremental search"),
   IV(NAME_searchWrappedWarned, "bool", IV_NONE,
      NAME_search, "The search reported hitting the end of the buffer"),
-  IV(NAME_exactCase, "bool", IV_BOTH,
+  SV(NAME_exactCase, "bool", IV_GET|IV_STORE, exactCaseTerminalImage,
      NAME_search, "Search is case sensitive"),
+  SV(NAME_searchWord, "bool", IV_GET|IV_STORE, searchWordTerminalImage,
+     NAME_search, "Search matches whole words only"),
   IV(NAME_data, "alien:RlcData", IV_NONE,
      NAME_cache, "Line buffer and related data")
 };
@@ -2476,6 +2511,8 @@ static classvardecl rc_terminal_image[] =
      "Style for its other matches on the page (@nil for none)"),
   RC(NAME_exactCase, "bool", "@off",
      "Incremental search is case sensitive"),
+  RC(NAME_searchWord, "bool", "@off",
+     "Incremental search matches whole words only"),
   RC(NAME_nfdStyle, "style*", "@nil",
      "Style for NFD grapheme clusters (default off)"),
   RC(NAME_linkStyle, "style*",
@@ -3487,11 +3524,12 @@ rlc_isearch_spans(RlcData b, rlc_span *spans, int max)
     return 0;
 
   bool ec = ti->exact_case == ON;
+  bool wm = ti->search_word == ON;
   ssize_t here = 0;
 
   while( n < max )
   { ssize_t hit = ucs_find(b, text, len, here, &ti->search_string->data,
-			   1, 'a', ec, false);
+			   1, 'a', ec, wm);
     if ( hit < 0 )
       break;
 

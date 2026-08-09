@@ -1020,6 +1020,7 @@ initialise(T, Title:title=[name],
     send(T, display, TI),
     send(T, display, new(Bar, epilog_report)),  % after TI: it draws on top
     send(Bar, displayed, @off),                 % ->display turned it on
+    send(Bar, client, TI),
     send(T, keyboard_focus, TI).
 
 resize(T) :->
@@ -1077,10 +1078,13 @@ report(T, Type:name, Fmt:[char_array], Args:any ...) :->
             %  stays until that something says it is done.
             get(T, member, terminal, TI),
             (   get(TI, focus_function, @nil)
-            ->  Transient = @on
-            ;   Transient = @off
-            ),
-            send(Bar, show, Type, S, Transient)
+            ->  Transient = @on,
+                send(Bar, show, Type, S, Transient)
+            ;   Transient = @off,
+                send(Bar, show, Type, S, Transient),
+                send(Bar, search_options,
+                     TI?exact_case, TI?search_word)
+            )
         )
     ;   Report =.. [report, Type, Fmt|Args],
         send_super(T, Report)
@@ -1114,7 +1118,8 @@ report_on_bar(warning).
     SIGWINCH -- on every keystroke of an incremental search.
 */
 
-variable(timer, timer*, get, "Hides us again").
+variable(timer,  timer*,          get, "Hides us again").
+variable(client, terminal_image*, get, "Terminal whose search we show").
 
 class_variable(background,  colour, black,  "Colour behind the message").
 class_variable(colour,      colour, white,  "Colour of the message").
@@ -1129,10 +1134,34 @@ initialise(R) :->
     send(B, fill, Background),
     send(R, display, new(Text, text('', left)), point(6, 3)),
     send(Text, colour, Colour),
+    send(R, display, new(Menu, menu(search_options, toggle,
+                                    message(R, option, @arg1, @arg2)))),
+    send(Menu, multiple_selection, @on),
+    send(Menu, show_label, @off),
+    send(Menu, layout, horizontal),
+    send(Menu, gap, size(10, 0)),
+    send(Menu, colour, Colour),
+    send_list(Menu, append,
+              [ menu_item(exact_case,  @default, 'Case'),
+                menu_item(search_word, @default, 'Word')
+              ]),
+    send(Menu, displayed, @off),
     %  The box must hold the text: my <-height is the union of the two,
     %  and ->place puts my bottom on the bottom of the terminal.
     get(Text, height, TextHeight),
     send(B, height, TextHeight+6).
+
+client(R, Client:terminal_image) :->
+    "Have the boxes drive the search of Client"::
+    send(R, slot, client, Client).
+
+option(R, Which:name, Value:bool) :->
+    "A box was clicked; the box is named after what it sets"::
+    get(R, client, Client),
+    (   Client == @nil
+    ->  true
+    ;   send(Client, Which, Value)
+    ).
 
 unlink(R) :->
     send(R, stop_timer),
@@ -1142,8 +1171,21 @@ place(R, X:int, Bottom:int, Width:int) :->
     "Put me at the bottom left of the area I cover"::
     get(R, member, box, Box),
     send(Box, width, Width),
+    get(R, member, search_options, Menu),
+    send(Menu, compute),
+    get(Menu, width, MW),
+    get(Box, height, BH),
+    get(Menu, height, MH),
+    send(Menu, set, Width-MW-6, (BH-MH)/2),
     get(R, height, H),
     send(R, set, X, Bottom-H).
+
+search_options(R, Case:bool, Word:bool) :->
+    "Show the boxes and what they stand at"::
+    get(R, member, search_options, Menu),
+    send(Menu, selected, exact_case, Case),
+    send(Menu, selected, search_word, Word),
+    send(Menu, displayed, @on).
 
 show(R, _Type:name, Message:string, Transient:[bool]) :->
     "Show Message, and take it away again unless it is a prompt"::
@@ -1151,6 +1193,8 @@ show(R, _Type:name, Message:string, Transient:[bool]) :->
     send(Text, string, Message),
     send(R, displayed, @on),
     send(R, expose),
+    get(R, member, search_options, Menu),
+    send(Menu, displayed, @off),        % a search turns them back on
     send(R, stop_timer),
     (   Transient == @off
     ->  true                            % it stays until its mode is done
@@ -1162,6 +1206,8 @@ show(R, _Type:name, Message:string, Transient:[bool]) :->
 hide(R) :->
     "Take the message away"::
     send(R, stop_timer),
+    get(R, member, search_options, Menu),
+    send(Menu, displayed, @off),
     send(R, displayed, @off).
 
 stop_timer(R) :->

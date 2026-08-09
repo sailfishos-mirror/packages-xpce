@@ -111,6 +111,8 @@ setup_headless :-
 :- use_module(library(pce)).
 :- use_module(library(epilog)).
 :- use_module(library(lists)).
+:- use_module(library(apply)).
+:- use_module(library(yall)).
 :- use_module(library(pairs)).
 :- use_module(library(option)).
 :- use_module(library(random)).
@@ -311,6 +313,7 @@ term_key_press(T, Key) :-
 
 button_control(0x1).			% BUTTON_control, src/h/graphics.h
 button_shift(0x2).			% BUTTON_shift, idem
+button_meta(0x4).			% BUTTON_meta, idem
 
 %!  term_foreground_process(+T, -PID) is semidet.
 %
@@ -534,11 +537,30 @@ term_select(terminal(_, xpce(_, TI)), From, To) :-
 term_scroll_to(terminal(_, xpce(_, TI)), Index) :-
     send(TI, scroll_to, Index).
 
+%!  term_search_options(+T, -Options) is semidet.
+%
+%   Which of the boxes on the report bar are ticked, as a list of
+%   `exact_case' and `search_word'.  Fails while they are not shown,
+%   which is whenever no search is running.
+
 %!  term_report(+T, -Text) is semidet.
 %
 %   What the window is showing on its report bar.  That is where an
 %   incremental search says what it is looking for and how many of them
 %   there are, and it is the only place any of it can be read back.
+
+term_search_options(terminal(_, xpce(_, TI)), Options) :-
+    get(TI, device, Window),
+    get(Window, member, epilog_report, Bar),
+    get(Bar, displayed, @on),
+    get(Bar, member, search_options, Menu),
+    get(Menu, displayed, @on),
+    get(Menu, selection, Selection),
+    (   Selection == @nil
+    ->  Options = []
+    ;   chain_list(Selection, Items),
+        maplist([Item,Value]>>get(Item, value, Value), Items, Options)
+    ).
 
 term_report(terminal(_, xpce(_, TI)), Text) :-
     get(TI, device, Window),
@@ -4084,18 +4106,27 @@ isearch_named_key(T, Key) :-
     term_typed(T, Key, 0),
     drive(0.2).
 
+isearch_meta(T, Letter) :-
+    button_meta(Meta),
+    term_typed(T, Letter, Meta),
+    drive(0.2).
+
 %!  isearch_stop(+T) is det.
 %
-%   End a search that is still running.  A test that leaves one behind
-%   hands the next one a Ctrl-Shift-F that repeats its search string
-%   rather than starting over.
+%   End a search that is still running and put back what it changed.  A
+%   test that leaves a search behind hands the next one a Ctrl-Shift-F
+%   that repeats its search string rather than starting over, and the
+%   two flags that say what counts as a match outlive a search on
+%   purpose.
 
 isearch_stop(T) :-
     T = terminal(_, xpce(_, TI)),
     (   get(TI, focus_function, @nil)
     ->  true
     ;   isearch_key(T, 0'G)
-    ).
+    ),
+    send(TI, exact_case, @off),         % they outlive a search, so a
+    send(TI, search_word, @off).        % test that sets one must undo it
 
 %!  on_screen(+T, +Text) is semidet.
 %!  screen_row(+T, +Text, -Row) is semidet.
@@ -4344,6 +4375,53 @@ test(isearch_counts_nothing_when_it_finds_nothing,
     isearch_type(T, 'nowhere'),
     term_report(T, Report),
     assertion(\+ sub_atom(Report, _, _, _, '/')).
+
+test(isearch_toggles_case_and_word,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  M-c and M-w change what counts as a match, and the search looks
+    %  again at once: `Format' is a match until case matters, and the
+    %  `format' inside `formatting' until whole words do.
+    buffer(T, 'Format\r\nformatting\r\nformat'),
+    isearch(T),
+    isearch_type(T, format),
+    term_report(T, All),
+    assertion(sub_atom(All, _, _, _, '(3/3)')),
+    isearch_meta(T, 0'c),
+    term_report(T, Cased),
+    assertion(sub_atom(Cased, _, _, _, '(2/2)')),
+    isearch_meta(T, 0'c),
+    isearch_meta(T, 0'w),
+    term_report(T, Worded),
+    assertion(sub_atom(Worded, _, _, _, '(2/2)')).
+
+test(isearch_shows_what_the_boxes_stand_at,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'format\r\nformat'),
+    isearch(T),
+    isearch_type(T, format),
+    term_search_options(T, None),
+    assertion(None == []),
+    isearch_meta(T, 0'c),
+    term_search_options(T, Case),
+    assertion(Case == [exact_case]),
+    isearch_meta(T, 0'w),
+    term_search_options(T, Both),
+    assertion(msort(Both, [exact_case, search_word])).
+
+test(isearch_boxes_go_away_with_the_search,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'format\r\nformat'),
+    isearch(T),
+    isearch_type(T, format),
+    assertion(term_search_options(T, _)),
+    isearch_key(T, 0'G),
+    assertion(\+ term_search_options(T, _)).
 
 test(isearch_control_w_takes_the_rest_of_the_word,
      [ setup(test_begin(T)),

@@ -87,6 +87,14 @@ keystrokes and hovered hyperlinks.
 - terminal_image<->exact_case: bool
     Whether the incremental search is case sensitive.
 
+- terminal_image<->search_word: bool
+    Whether the incremental search matches whole words only, in the
+    sense of `<-syntax`.
+
+    Both outlive the search that used them, and setting either while
+    one is running looks again at once, so the hit, the tally and what
+    is painted all follow.
+
 
 ## Send methods {#class-terminal_image-send}
 
@@ -183,6 +191,8 @@ keystrokes and hovered hyperlinks.
     | `^S`, `^R`         | The next hit, forwards resp. backwards |
     | `Backspace`        | Drop a character and search again |
     | `^W`               | Take the word behind the hit into the search string, along with whatever separates the two, so that pressing it again walks on word by word.  Not across a line: a search string with a line break in it matches almost nothing |
+    | `M-c`              | Turn `<->exact_case` on or off |
+    | `M-w`              | Turn `<->search_word` on or off |
     | `^G`               | Give back the view and the selection the search started from |
     | `Escape`, `Return` | Leave the search with the hit selected |
     | Any other key      | Leaves the search, and then means what it usually means |
@@ -295,6 +305,7 @@ see the scroll-back that came before it.
 - selection_style: yellow background (X) or system selection style.
 - isearch_style: green background.
 - isearch_other_style: pale turquoise background.
+- exact_case, search_word: both `@off`.
 - exact_case: `@off`; the incremental search ignores case.
 - link_style, link_armed_style: blue, dotted/solid underline.
 - save_lines: 1000 by default.
