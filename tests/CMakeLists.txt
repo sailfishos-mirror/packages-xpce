@@ -4,10 +4,12 @@
 test_libs(number_conversion)
 test_libs(object_reference)
 test_libs(terminal_osc)
+test_libs(terminal_bce)
 
 set(XPCE_EXTRA_TESTS xpce:number_conversion
                      xpce:object_reference
-                     xpce:terminal_osc)
+                     xpce:terminal_osc
+                     xpce:terminal_bce)
 
 # The terminal suite drives a terminal and reads the screen back, so it
 # spends its time waiting for the terminal rather than computing: about a

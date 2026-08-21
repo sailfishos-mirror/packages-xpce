@@ -231,6 +231,8 @@ typedef struct
   unsigned	 adjusted : 1;		/* line has been adjusted? */
   unsigned	 changed : 1;		/* line needs redraw */
   unsigned	 softreturn : 1;	/* wrapped line */
+  unsigned	 eol_erased : 1;	/* paint the tail using eol_flags */
+  text_flags	 eol_flags;		/* background colour erase (bce) */
   int		 line_no;		/* The number of the line */
 } rlc_text_line, *RlcTextLine;
 
