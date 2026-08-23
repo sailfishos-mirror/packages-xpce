@@ -7725,6 +7725,24 @@ set_stream_properties(IOSTREAM *i, IOSTREAM *o, IOSTREAM *e)
 #endif
 
 /**
+ * Neither  side may  survive an  exec().   The client  hands its  own
+ * descriptors to  a process it  starts -- a  shell of shell/0  or of
+ * process_create/3 -- as  stdin, stdout and stderr,  and those it is
+ * welcome to.  A copy of ours is  another matter: as long as a child
+ * holds the master, the pty never  hangs up, so the child outlives us
+ * rather than being sent  the SIGHUP that closing the  master owes it
+ * when Prolog halts.
+ */
+
+static void
+set_cloexec(int fd)
+{ int flags;
+
+  if ( fd >= 0 && (flags=fcntl(fd, F_GETFD)) != -1 )
+    fcntl(fd, F_SETFD, flags|FD_CLOEXEC);
+}
+
+/**
  * Establish  a pty  pair between  the xpce  terminal and  the client.
  * Normally,  the client  is a  Prolog  thread, but  this design  also
  * allows  forking and  attaching  an arbitrary  process  to our  xpce
@@ -7740,6 +7758,7 @@ rlc_open_pty_pair(RlcData b, int cols, int rows)
   b->pty.master_fd = posix_openpt(O_RDWR | O_NOCTTY);
   if ( b->pty.master_fd < 0 )
     return errorPce(b->object, NAME_cannotOpenPty);
+  set_cloexec(b->pty.master_fd);
 
   if ( grantpt(b->pty.master_fd) < 0 )
   { close(b->pty.master_fd);
@@ -7760,7 +7779,7 @@ rlc_open_pty_pair(RlcData b, int cols, int rows)
 #endif
 
   strncpy(b->pty.slave_name, slave, sizeof(b->pty.slave_name) - 1);
-  b->pty.slave_fd = open(b->pty.slave_name, O_RDWR | O_NOCTTY);
+  b->pty.slave_fd = open(b->pty.slave_name, O_RDWR|O_NOCTTY|O_CLOEXEC);
   if ( b->pty.slave_fd < 0 )
   { close(b->pty.master_fd);
     return errorPce(b->object, NAME_cannotOpenPty);
@@ -7806,7 +7825,7 @@ rlc_reclaim_pty(RlcData b)
        tcgetattr(b->pty.slave_fd, &tio) == 0 )
     return false;			/* not revoked */
 
-  int fd = open(b->pty.slave_name, O_RDWR|O_NOCTTY);
+  int fd = open(b->pty.slave_name, O_RDWR|O_NOCTTY|O_CLOEXEC);
   if ( fd < 0 )
     return false;
 
@@ -7818,7 +7837,9 @@ rlc_reclaim_pty(RlcData b)
 
   for(int i=0; i<4; i++)		/* leave what shell/1 already did */
   { if ( fds[i] >= 0 && fds[i] != fd && tcgetattr(fds[i], &tio) < 0 )
-      dup2(fd, fds[i]);
+    { dup2(fd, fds[i]);
+      set_cloexec(fds[i]);		/* dup2() does not carry it over */
+    }
   }
   close(fd);
 
