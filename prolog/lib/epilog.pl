@@ -309,6 +309,13 @@ dbg_format(Fmt, Args) :-
 %   ANSI 16 through the 256 colour cube  to   24  bit  RGB. What it does
 %   ignore  are  the  attributes  it  cannot  draw  (dim,  italic,  slow
 %   blink and invisible), printer control and left/right margins.
+%
+%   ``TERM_PROGRAM`` must be updated along  with   it.  We  are not the
+%   terminal we were started from, and  a   stale  value makes programs
+%   apply that terminal's quirks to ours.   Notably ansi_get_color/2 does
+%   not query a terminal that says it is `Apple_Terminal`, which would
+%   leave every program started from an Epilog window unable to find out
+%   the colours of the window it runs in.
 
 fix_term :-
     current_prolog_flag(windows, true),
@@ -318,7 +325,8 @@ fix_term :-
     getenv('TERM', _),
     !.
 fix_term :-
-    setenv('TERM', 'xterm-256color').
+    setenv('TERM', 'xterm-256color'),
+    setenv('TERM_PROGRAM', 'Epilog').
 
 %!  ep_has_console(?Thread)
 %
@@ -1459,14 +1467,41 @@ epilog_run(Goal) :-
 %   an exception.  As for shell/0, the exit status is not our business.
 
 run_shell :-
-    (   nb_current(epilog_process_working_directory, Dir)
-    ->  Options = [cwd(Dir)]
-    ;   Options = []
-    ),
+    findall(Option, shell_process_option(Option), Options),
     shell_command(Shell),
     shell_prog_argv(Shell, Prog, Argv),
     process_create(Prog, Argv, [process(PID)|Options]),
     process_wait(PID, _Status).
+
+%!  shell_process_option(-Option) is nondet.
+%
+%   Options for the process we run in this terminal.
+
+shell_process_option(cwd(Dir)) :-
+    nb_current(epilog_process_working_directory, Dir).
+shell_process_option(environment(Env)) :-
+    terminal_environment(Env).
+
+%!  terminal_environment(-Env:list) is semidet.
+%
+%   Environment variables that describe _this_ terminal.  A process we
+%   start must be told about the terminal it talks to rather than
+%   inherit the description of the terminal Epilog itself was started
+%   from, which is what it finds in the environment if Epilog was
+%   started from one.  See fix_term/0, which does the same for the
+%   processes started from the Prolog top level of an Epilog window.
+%
+%   Fails on Windows, where process_create/3 handles environment/1 as
+%   env/1 and the process would lose the rest of its environment.
+
+terminal_environment(Env) :-
+    \+ current_prolog_flag(windows, true),
+    current_prolog_flag(version_data, swi(Major,Minor,Patch,_)),
+    atomic_list_concat([Major,Minor,Patch], '.', Version),
+    Env = [ 'TERM'            = 'xterm-256color',
+            'TERM_PROGRAM'    = 'Epilog',
+            'TERM_PROGRAM_VERSION' = Version
+          ].
 
 %!  shell_prog_argv(+Shell, -Prog, -Argv) is det.
 %
