@@ -960,7 +960,38 @@ start_terminal(Terminal) :-
     current_backend(Backend),
     term_start(Backend, Terminal),
     wait_for_prompt(Terminal),
+    sync_client(Terminal),
     wait_settled(Terminal).
+
+%!  sync_client(+Terminal) is det.
+%
+%   Wait until the client has written everything it still had to say
+%   about the state it starts in.  Waiting for the prompt does not
+%   cover that, and neither does waiting for the screen to stop
+%   changing: the window sends the client a SIGWINCH while it is still
+%   settling on its size, and the client answers that with a redraw of
+%   its input line.  The redraw paints the prompt where the prompt
+%   already is, so it leaves nothing for wait_settled/1 to see, and a
+%   test that cleared the screen in the meantime finds the prompt back
+%   on top of what it painted.
+%
+%   Type a character instead and wait for the client to echo it.  The
+%   echo can only come after everything the client had queued before
+%   it, so seeing it proves the redraw has been and gone.  ^U takes the
+%   character away again, which leaves the empty prompt we started
+%   from.  Gives up rather than failing, as wait_settled/1 does.
+
+sync_client(Terminal) :-
+    type(Terminal, x),
+    ignore(wait_until(echoed(Terminal, x), 5)),
+    key(Terminal, ctrl_u),
+    wait_for_prompt(Terminal).
+
+echoed(Terminal, Char) :-
+    cursor(Terminal, _, Row),
+    row_text(Terminal, Row, Line),
+    atom(Line),
+    sub_atom(Line, _, _, _, Char).
 
 %!  wait_settled(+Terminal) is det.
 %
