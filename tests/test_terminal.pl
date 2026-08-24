@@ -167,6 +167,7 @@ terminal_test_unit(terminal_wide).
 terminal_test_unit(terminal_non_bmp).
 terminal_test_unit(terminal_mixed).
 terminal_test_unit(terminal_background).
+terminal_test_unit(terminal_attributes).
 terminal_test_unit(terminal_mouse).
 terminal_test_unit(terminal_wheel).
 terminal_test_unit(terminal_alt_scroll).
@@ -505,6 +506,34 @@ term_selection(terminal(_, xpce(_, TI)), Atom) :-
 
 term_has_selection(terminal(_, xpce(_, TI))) :-
     send(TI, has_selection).
+
+%!  term_screenshot(+T, -Pixels) is semidet.
+%
+%   A coarse sample of the pixels of the whole window.  Two samples of
+%   the same text differ exactly when it was painted differently, which
+%   is how the suite asserts that an attribute reached the painter: it
+%   need not know which font was chosen, nor where the cells are.  It
+%   cannot know the latter anyway -- Pango lays out a run as a whole, so
+%   the glyphs of a row are not aligned to the cell grid and two halves
+%   of one row cannot be compared with each other.
+%
+%   Sample rather than compare whole images: a full window is a megapixel
+%   read one `get' at a time, and every attribute this distinguishes
+%   changes far more than one pixel in eighty.
+
+term_screenshot(terminal(_, xpce(Frame, _)), Pixels) :-
+    get(Frame, image, Img),
+    get(Img, size, size(W, H)),
+    findall(P,
+            ( between(0, 200, I),
+              X is I*2,
+              X < W,
+              between(0, 40, Y),
+              Y < H,
+              get(Img, pixel(X, Y), C),
+              get(C, red, P)
+            ),
+            Pixels).
 
 %!  term_find(+T, +From, +For, -Index) is semidet.
 %!  term_find(+T, +From, +For, +Times, +Return, +Case, +Word, -Index) is semidet.
@@ -2672,6 +2701,55 @@ test(thread_output_keeps_input_line, [setup(test_begin(T))]) :-
     assert_cursor(T, ExpCol, InputRow).
 
 :- end_tests(terminal_background).
+
+:- begin_tests(terminal_attributes,
+               [ setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
+
+%!  attribute_shot(+T, +Sgr, -Pixels) is det.
+%
+%   Paint a row of identical glyphs wrapped in Sgr and sample the window.
+%   The trailing line is there because the last line written lags a
+%   moment; it is the same in every shot, so it cancels out.
+
+attribute_shot(T, Sgr, Pixels) :-
+    out(T, '\e[2J\e[H'),
+    out(T, [Sgr, 'HHHHHHHHHHHHHHHHHHHH\e[0m\r\n', '.\r\n']),
+    drive(0.3),
+    term_screenshot(T, Pixels).
+
+test(sgr_selects_a_font, [setup(test_begin(T))]) :-
+    %  The caret is off for the whole test: it blinks, and a blinking
+    %  caret puts a difference in every pair of shots.
+    assertion(wait_for_prompt(T)),
+    out(T, '\e[?25l'),
+    drive(0.3),
+    attribute_shot(T, '',            Plain),
+    attribute_shot(T, '',            Plain2),
+    attribute_shot(T, '\e[1m',       Bold),
+    attribute_shot(T, '\e[3m',       Italic),
+    attribute_shot(T, '\e[1;3m',     BoldItalic),
+    attribute_shot(T, '\e[3m\e[23m', ItalicOff),
+    attribute_shot(T, '\e[1m\e[22m', BoldOff),
+    out(T, '\e[?25h'),
+    %  Without this the rest says nothing: it is what shows that two
+    %  shots of the same text do compare equal.
+    assertion(Plain == Plain2),
+    %  Bold and SGR 22 are the reference.  They worked before italic
+    %  existed, so a failure here is the harness rather than the feature.
+    assertion(Plain \== Bold),
+    assertion(Plain == BoldOff),
+    %  SGR 3 reaches the painter and SGR 23 takes it away again.
+    assertion(Plain \== Italic),
+    assertion(Plain == ItalicOff),
+    %  <-font, <-bold_font, <-italic_font and <-bold_italic_font are four
+    %  different fonts, so bold italic is neither of the two on its own.
+    assertion(BoldItalic \== Plain),
+    assertion(BoldItalic \== Bold),
+    assertion(BoldItalic \== Italic).
+
+:- end_tests(terminal_attributes).
 
 
 		 /*******************************
