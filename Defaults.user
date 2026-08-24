@@ -130,7 +130,9 @@
 !			  boldhuge  := font(sans, bold,   18), \
 !			  fixed     := font(mono, normal, 14), \
 !			  tt        := font(mono, normal, 14), \
-!			  boldtt    := font(mono, bold,   14)  \
+!			  boldtt    := font(mono, bold,   14), \
+!			  itt       := font(mono, italic, 14), \
+!			  bitt      := font(mono, italic, 14, bold)  \
 !			]
 
 ! XPCE uses `sans`, `serif` and `mono` for all its named fonts

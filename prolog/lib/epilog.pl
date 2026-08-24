@@ -307,8 +307,8 @@ dbg_format(Fmt, Args) :-
 %   We claim ``xterm-256color``: the  terminal   implements  the  string
 %   capabilities of that description  and  the   colours  it  adds, from
 %   ANSI 16 through the 256 colour cube  to   24  bit  RGB. What it does
-%   ignore  are  the  attributes  it  cannot  draw  (dim,  italic,  slow
-%   blink and invisible), printer control and left/right margins.
+%   ignore  are  the  attributes  it  cannot  draw  (dim, slow blink and
+%   invisible), printer control and left/right margins.
 %
 %   ``TERM_PROGRAM`` must be updated along  with   it.  We  are not the
 %   terminal we were started from, and  a   stale  value makes programs

@@ -333,6 +333,8 @@ rlc_cluster_prev(const RlcTextLine tl, int pos)
 		 *	     FUNCTIONS		*
 		 *******************************/
 
+static void	assign_variant_fonts(TerminalImage ti, FontObj bold,
+				     FontObj italic, FontObj bold_italic);
 static void	rlc_destroy_buffer(RlcData b);
 static bool	rlc_caret_xy(RlcData b, int *x, int *y);
 static void	rlc_resize_pixel_units(RlcData b, int w, int h);
@@ -487,6 +489,10 @@ initialiseTerminalImage(TerminalImage ti, Int w, Int h)
   assign(ti, search_wrapped_warned, OFF);
   assign(ti, working_directory, NIL);
   obtainClassVariablesObject(ti);
+  /* The class variables name the variant fonts by alias; they need the
+     same pitch check as the ones ->font derives. */
+  assign_variant_fonts(ti, ti->bold_font, ti->italic_font,
+		       ti->bold_italic_font);
 
   // compute width in characters from w
   int cw = (double)valInt(w)/c_width('m', ti->font);
@@ -2239,17 +2245,63 @@ refreshTerminalImage(TerminalImage ti)
   succeed;
 }
 
-static status
-fontTerminalImage(TerminalImage ti, FontObj font, FontObj bold)
-{ assign(ti, font, font);
-  if ( isDefault(bold) )
-    bold = newObject(ClassFont, font->family, NAME_bold, font->points, EAV);
-  CharArray cmp = (CharArray)NAME_x;
-  if ( getAdvanceFont(font, cmp) != getAdvanceFont(bold, cmp) )
-  { Cprintf("Fonts need to have the same pitch\n");
-    bold = NIL;
+/* Resolve one of the variants of <-font: the boldened, the slanted and
+ * the boldened slanted one.  @default means "derive it from <-font",
+ * which is what makes the variants follow a font the client set without
+ * naming them.  Whatever we end up with must advance by the same amount
+ * as the regular font: the cell grid (b->cw) comes from that font alone
+ * (rlc_init_text_dimensions()), so a variant of another pitch would put
+ * its glyphs beside the cells they belong to.  Such a variant becomes
+ * @nil and the painter falls back to a font that does fit.
+ *
+ * `style' is the font style to derive and `weight' its weight, which
+ * only the boldened slanted variant needs to name: initialiseFont()
+ * infers a bold weight from the style `bold' but not from `italic'.
+ */
+
+static FontObj
+variant_font(FontObj font, FontObj var, Name style, Name weight)
+{ if ( isDefault(var) )
+    var = newObject(ClassFont, font->family, style, font->points, weight, EAV);
+
+  if ( notNil(var) && var != font )
+  { CharArray cmp = (CharArray)NAME_x;
+
+    if ( getAdvanceFont(font, cmp) != getAdvanceFont(var, cmp) )
+    { Cprintf("%s: pitch differs from %s; ignored\n", pp(var), pp(font));
+      var = NIL;
+    }
   }
-  assign(ti, bold_font, bold);
+
+  return var;
+}
+
+
+/* Fill the three variant slots from `bold', `italic' and `bold_italic',
+ * each of which may be @default to have it derived from <-font.  Used
+ * both by ->font and by ->initialise, where the slots arrive from the
+ * class variables and are as much in need of the pitch check.
+ */
+
+static void
+assign_variant_fonts(TerminalImage ti,
+		     FontObj bold, FontObj italic, FontObj bold_italic)
+{ FontObj font = ti->font;
+
+  assign(ti, bold_font,
+	 variant_font(font, bold, NAME_bold, DEFAULT));
+  assign(ti, italic_font,
+	 variant_font(font, italic, NAME_italic, DEFAULT));
+  assign(ti, bold_italic_font,
+	 variant_font(font, bold_italic, NAME_italic, NAME_bold));
+}
+
+
+static status
+fontTerminalImage(TerminalImage ti, FontObj font,
+		  FontObj bold, FontObj italic, FontObj bold_italic)
+{ assign(ti, font, font);
+  assign_variant_fonts(ti, bold, italic, bold_italic);
   requestComputeGraphical(ti, DEFAULT);
   changedEntireImageGraphical(ti);
 
@@ -2382,7 +2434,7 @@ static char *T_scrollVertical[] =
 { "direction={forwards,backwards,goto}",
   "unit={file,page,line}", "amount=int" };
 static char *T_font[] =
-{ "font=font", "bold=[font]" };
+{ "font=font", "bold=[font]", "italic=[font]", "bold_italic=[font]" };
 static char *T_workingDirectory[] =
 { "directory=name*", "host=name*" };
 static char *T_print[] =
@@ -2404,6 +2456,10 @@ static vardecl var_terminal_image[] =
      NAME_appearance, "Font used to draw the string"),
   IV(NAME_boldFont, "font*", IV_GET,
      NAME_appearance, "Font for bold text"),
+  IV(NAME_italicFont, "font*", IV_GET,
+     NAME_appearance, "Font for italic text"),
+  IV(NAME_boldItalicFont, "font*", IV_GET,
+     NAME_appearance, "Font for bold italic text"),
   SV(NAME_background, "[colour]", IV_GET|IV_STORE, backgroundTerminalImage,
      NAME_appearance, "Terminal background colour"),
   SV(NAME_selectionStyle, "[style]", IV_GET|IV_STORE,
@@ -2460,8 +2516,8 @@ static senddecl send_terminal_image[] =
      DEFAULT, "Destroy data"),
   SM(NAME_geometry, 4, T_geometry, geometryTerminalImage,
      DEFAULT, "Change geometry"),
-  SM(NAME_font, 2, T_font, fontTerminalImage,
-     NAME_appearance, "Set font and bold font"),
+  SM(NAME_font, 4, T_font, fontTerminalImage,
+     NAME_appearance, "Set font and its bold and italic variants"),
   SM(NAME_compute, 0, NULL, computeTerminalImage,
      NAME_repaint, "Recompute the terminal image"),
   SM(NAME_bubbleScrollBar, 1, "scroll_bar", bubbleScrollBarTerminalImage,
@@ -2614,6 +2670,10 @@ static classvardecl rc_terminal_image[] =
      "Default font"),
   RC(NAME_boldFont, "font*", "boldtt",
      "Bold font"),
+  RC(NAME_italicFont, "font*", "itt",
+     "Italic font"),
+  RC(NAME_boldItalicFont, "font*", "bitt",
+     "Bold italic font"),
   RC(NAME_ansiColours, "vector*",
      "vector("
      "colour(black),"
@@ -4108,6 +4168,7 @@ typedef struct
   bool   underline;
   bool   strike;
   bool   bold;
+  bool   italic;
 } effective_style;
 
 static effective_style
@@ -4120,7 +4181,8 @@ effective_style_for(RlcData b, text_flags flags, bool armed)
       .underline_texture = NAME_none,
       .strike            = flags.strike,
       .strike_texture    = NAME_none,
-      .bold              = flags.bold
+      .bold              = flags.bold,
+      .italic            = flags.italic
     };
 
   /* Link overlay: only slots that the user explicitly set (neither nil
@@ -4166,10 +4228,33 @@ effective_style_for(RlcData b, text_flags flags, bool armed)
       }
       if ( ls->attributes & TXT_BOLDEN )
 	es.bold = true;
+      if ( ls->attributes & TXT_ITALIC )
+	es.italic = true;
     }
   }
   return es;
 }
+
+/* The font a run is painted in.  <-font, <-bold_font, <-italic_font and
+ * <-bold_italic_font are a 2x2 over bold and italic, but any of the
+ * three variants may be @nil -- the client never named it, or it was
+ * dropped for having the wrong pitch.  Fall back through the variants
+ * that are left rather than losing the attribute entirely: bold italic
+ * shown as italic still says more than bold italic shown as neither.
+ */
+
+static FontObj
+variant_font_for(TerminalImage ti, const effective_style *es)
+{ if ( es->bold && es->italic && notNil(ti->bold_italic_font) )
+    return ti->bold_italic_font;
+  if ( es->italic && notNil(ti->italic_font) )
+    return ti->italic_font;
+  if ( es->bold && notNil(ti->bold_font) )
+    return ti->bold_font;
+
+  return ti->font;
+}
+
 
 /** Draw a line of the terminal
  */
@@ -4316,13 +4401,7 @@ rlc_paint_text(RlcData b,
 	obg = r_background(es.bg);
       if ( flags.inverse )
 	r_swap_background_and_foreground();
-      FontObj font = ti->font;
-      if ( es.bold )
-      { if ( notNil(ti->bold_font) )
-	  font = ti->bold_font;
-	else
-	  Cprintf("No bold font\n");
-      }
+      FontObj font = variant_font_for(ti, &es);
 
       int x0 = *cx;
       *cx += chars_columns(s, segment) * b->cw;
@@ -6068,6 +6147,8 @@ rlc_sgr(RlcData b, int sgr)
   { b->sgr_flags.bg = sgr == 109 ? PAL_DEFAULT : sgr-100+8;
   } else if ( sgr == 1 )
   { b->sgr_flags.bold = 1;
+  } else if ( sgr == 3 )
+  { b->sgr_flags.italic = 1;
   } else if ( sgr == 4 )
   { b->sgr_flags.underline = 1;
   } else if ( sgr == 7 )
@@ -6076,6 +6157,8 @@ rlc_sgr(RlcData b, int sgr)
   { b->sgr_flags.strike = 1;
   } else if ( sgr == 22 )	/* also clears "faint" */
   { b->sgr_flags.bold = 0;
+  } else if ( sgr == 23 )	/* also clears "fraktur", which we never set */
+  { b->sgr_flags.italic = 0;
   } else if ( sgr == 24 )
   { b->sgr_flags.underline = 0;
   } else if ( sgr == 27 )

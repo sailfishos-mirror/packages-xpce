@@ -26,6 +26,15 @@ keystrokes and hovered hyperlinks.
 - terminal_image<-bold_font: font*
     Optional bold font; bold text falls back to `<-font` if @nil.
 
+- terminal_image<-italic_font: font*
+    Optional slanted font (SGR 3); italic text falls back to `<-font` if
+    @nil.
+
+- terminal_image<-bold_italic_font: font*
+    Optional bold slanted font (SGR 1 and 3 together).  If @nil, bold
+    italic text falls back to `<-italic_font`, then `<-bold_font`, then
+    `<-font`.
+
 - terminal_image<->background: [colour]
     Background colour of the buffer.
 
@@ -104,8 +113,13 @@ keystrokes and hovered hyperlinks.
 - terminal_image->geometry: x=[int], y=[int], width=[int], height=[int]
     Move/resize the image.
 
-- terminal_image->font: font=font, bold=[font]
-    Change the regular and bold fonts.
+- terminal_image->font: font=font, bold=[font], italic=[font], bold_italic=[font]
+    Change the regular font and its variants.  A variant left at
+    @default is derived from `font`, keeping its family and size.  A
+    variant that does not advance by the same amount as `font` is
+    rejected with a message and set to @nil: the cell grid is measured
+    from the regular font alone, so a variant of another pitch would not
+    line up with it.
 
 - terminal_image->compute
     Recompute the rendered image.
@@ -300,7 +314,8 @@ see the scroll-back that came before it.
 
 ## Class variables {#class-terminal_image-classvars}
 
-- font, bold_font: default to `tt` and `boldtt`.
+- font, bold_font, italic_font, bold_italic_font: default to `tt`,
+  `boldtt`, `itt` and `bitt`.
 - background, colour: default to `white` and `black`.
 - selection_style: yellow background (X) or system selection style.
 - isearch_style: green background.

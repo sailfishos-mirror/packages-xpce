@@ -300,6 +300,8 @@ NewClass(terminal_image)
   KeyBinding	bindings;		/* Key bindings */
   FontObj	font;			/* Basic font */
   FontObj	bold_font;		/* Boldened font */
+  FontObj	italic_font;		/* Slanted font */
+  FontObj	bold_italic_font;	/* Boldened slanted font */
   Colour	background;		/* Background colour */
   Style		selection_style;	/* Style for selected text  */
   Style		isearch_style;		/* ... while searching for it */

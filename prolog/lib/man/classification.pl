@@ -3491,9 +3491,11 @@ scope('R.terminal_image.ansi_colours', advanced).
 scope('R.terminal_image.auto_copy', advanced).
 scope('R.terminal_image.background', advanced).
 scope('R.terminal_image.bold_font', advanced).
+scope('R.terminal_image.bold_italic_font', advanced).
 scope('R.terminal_image.colour', advanced).
 scope('R.terminal_image.cursor', advanced).
 scope('R.terminal_image.font', advanced).
+scope('R.terminal_image.italic_font', advanced).
 scope('R.terminal_image.link_armed_style', advanced).
 scope('R.terminal_image.link_cursor', advanced).
 scope('R.terminal_image.link_style', advanced).
@@ -5602,6 +5604,7 @@ scope('V.terminal_image.armed_link', advanced).
 scope('V.terminal_image.background', advanced).
 scope('V.terminal_image.bindings', advanced).
 scope('V.terminal_image.bold_font', advanced).
+scope('V.terminal_image.bold_italic_font', advanced).
 scope('V.terminal_image.colour', advanced).
 scope('V.terminal_image.connections', advanced).
 scope('V.terminal_image.cursor', advanced).
@@ -5609,6 +5612,7 @@ scope('V.terminal_image.data', internal).
 scope('V.terminal_image.device', advanced).
 scope('V.terminal_image.displayed', advanced).
 scope('V.terminal_image.font', advanced).
+scope('V.terminal_image.italic_font', advanced).
 scope('V.terminal_image.handles', advanced).
 scope('V.terminal_image.inverted', advanced).
 scope('V.terminal_image.layout_interface', advanced).

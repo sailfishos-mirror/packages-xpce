@@ -548,7 +548,9 @@ static classvardecl rc_font[] =
      "  boldhuge  := font(sans, bold,   18),\n"
      "  fixed     := font(mono, normal, 12),\n"
      "  tt        := font(mono, normal, 12),\n"
-     "  boldtt    := font(mono, bold,   12)\n"
+     "  boldtt    := font(mono, bold,   12),\n"
+     "  itt       := font(mono, italic, 12),\n"
+     "  bitt      := font(mono, italic, 12, bold)\n"
      "]",
      "Predefined font-aliases"),
   RC(NAME_pangoFamilies, "chain",
