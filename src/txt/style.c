@@ -93,11 +93,11 @@ loadStyle(Style s, IOSTREAM *fd, ClassDef def)
 static status
 attribute_style(Style s, unsigned char att, BoolObj on)
 { if ( on == ON )
-  { if ( s->attributes && att )
+  { if ( s->attributes & att )
       succeed;
     s->attributes |= att;
   } else
-  { if ( !(s->attributes && att) )
+  { if ( !(s->attributes & att) )
       succeed;
     s->attributes &= ~att;
   }
