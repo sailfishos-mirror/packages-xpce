@@ -34,7 +34,7 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-#define _XOPEN_SOURCE 600	/* Get PTY API */
+#define _XOPEN_SOURCE 700	/* Get PTY API and O_CLOEXEC */
 #undef _WIN32_WINNT
 #define _WIN32_WINNT 0x0B00	/* Get PseudoConsole API */
 #define SWIPL_WINDOWS_NATIVE_ACCESS 1
@@ -7743,6 +7743,24 @@ set_cloexec(int fd)
 }
 
 /**
+ * Open the client side of our pty.
+ *
+ * O_CLOEXEC is POSIX 2008.  Asking for _XOPEN_SOURCE 600 rather than
+ * 700 at the  top of this file hides it on  glibc, and the resulting
+ * error names  the symbol rather  than the cause;  hence the check
+ * below.
+ */
+
+#ifndef O_CLOEXEC
+#error "O_CLOEXEC undeclared: check _XOPEN_SOURCE at the top of this file"
+#endif
+
+static int
+open_pty_slave(RlcData b)
+{ return open(b->pty.slave_name, O_RDWR|O_NOCTTY|O_CLOEXEC);
+}
+
+/**
  * Establish  a pty  pair between  the xpce  terminal and  the client.
  * Normally,  the client  is a  Prolog  thread, but  this design  also
  * allows  forking and  attaching  an arbitrary  process  to our  xpce
@@ -7779,7 +7797,7 @@ rlc_open_pty_pair(RlcData b, int cols, int rows)
 #endif
 
   strncpy(b->pty.slave_name, slave, sizeof(b->pty.slave_name) - 1);
-  b->pty.slave_fd = open(b->pty.slave_name, O_RDWR|O_NOCTTY|O_CLOEXEC);
+  b->pty.slave_fd = open_pty_slave(b);
   if ( b->pty.slave_fd < 0 )
   { close(b->pty.master_fd);
     return errorPce(b->object, NAME_cannotOpenPty);
@@ -7825,7 +7843,7 @@ rlc_reclaim_pty(RlcData b)
        tcgetattr(b->pty.slave_fd, &tio) == 0 )
     return false;			/* not revoked */
 
-  int fd = open(b->pty.slave_name, O_RDWR|O_NOCTTY|O_CLOEXEC);
+  int fd = open_pty_slave(b);
   if ( fd < 0 )
     return false;
 
