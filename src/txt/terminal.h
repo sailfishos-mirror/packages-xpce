@@ -300,6 +300,11 @@ typedef struct rlc_data
     int	base_line;			/* ... where changing the string */
     int	base_char;			/* looks from ... */
     int	window_start;			/* ... and the view it started from */
+    bool seeded;			/* Started from a selection, which */
+    int	held_start_line;		/* ^G gives back along with the */
+    int	held_start_char;		/* view */
+    int	held_end_line;
+    int	held_end_char;
   } isearch;
   bool		app_escape;		/* Send ESC 0 instead of ESC [ */
   bool		app_keypad_mode;	/* Send ESC <N> p from keypad */

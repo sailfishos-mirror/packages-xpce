@@ -900,6 +900,12 @@ static kbDef terminal[] =
   { "\\C-v",		NAME_paste },
   { "\\C-\\S-a",	NAME_selectAll },
   { "\\C-\\S-f",	NAME_isearchBackward },
+  /* Only while a selection says what to look for; without one they fail
+   * and the key means to the client what it always meant -- ^R is the
+   * line editor's own history search.
+   */
+  { "\\C-s",		NAME_isearchSelectionForward },
+  { "\\C-r",		NAME_isearchSelectionBackward },
   { NULL,		NULL }
 };
 

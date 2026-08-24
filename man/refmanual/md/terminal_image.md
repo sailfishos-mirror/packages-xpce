@@ -94,7 +94,8 @@ keystrokes and hovered hyperlinks.
 
 - terminal_image<-selection_string: string*
     The selected text, when it is a selection whose other occurrences
-    are highlighted, and `@nil` when it is not.  See `->selection`.
+    are highlighted, and `@nil` when it is not.  See `->selection`; it
+    is also what `->isearch_selection_forward` searches for.
 
 - terminal_image<-search_direction: {forward,backward}
     Direction the incremental search is going.
@@ -204,6 +205,26 @@ keystrokes and hovered hyperlinks.
     those would light up most of the screen.  Nor is anything looked for
     on the alternate screen, whose lines are not in the buffer.
 
+    What is looked for is the text under the selection as it is now: a
+    client that repaints or erases the screen changes what a selection
+    holds without moving it, and the matches follow.
+
+- terminal_image->isearch_selection_forward
+- terminal_image->isearch_selection_backward
+    Start an incremental search for what the selection holds, from where
+    the selection is, and step to the next resp. previous match at once
+    -- so the matches that are already lit up (see `->selection`) are the
+    ones this walks.  From there it is the ordinary search below, `^S`
+    and `^R` included.  `\C-s` and `\C-r` are bound to these.
+
+    Fails when there is no such selection, and a binding that fails
+    hands the key on: without one, `^S` and `^R` mean to whatever is
+    reading from the terminal what they always meant, which for the line
+    editor is its own history search.
+
+    `^G` gives back the view *and* the selection the search started from,
+    so a search one did not mean to start costs nothing.
+
 - terminal_image->scroll_to: index=int
     Scroll the line holding `index` into view, moving as little as
     possible and doing nothing while the line is already on the screen.
@@ -238,6 +259,10 @@ keystrokes and hovered hyperlinks.
     | `^G`               | Give back the view and the selection the search started from |
     | `Escape`, `Return` | Leave the search with the hit selected |
     | Any other key      | Leaves the search, and then means what it usually means |
+
+    A search that started from a selection
+    (`->isearch_selection_backward`) differs in one way: `^G` puts that
+    selection back rather than leaving none.
 
     Two things differ from `editor->isearch_forward`.  `Escape` and
     `Return` are swallowed rather than passed on: an unhandled key here

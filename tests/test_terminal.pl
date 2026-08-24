@@ -508,6 +508,19 @@ term_selection(terminal(_, xpce(_, TI)), Atom) :-
 term_has_selection(terminal(_, xpce(_, TI))) :-
     send(TI, has_selection).
 
+%!  term_selection_string(+T, -Atom) is det.
+%
+%   The selection as the terminal is matching it, '' when it is not
+%   matching it at all.  Unlike <-selected this says what the highlight
+%   is of, which is not every selection.
+
+term_selection_string(terminal(_, xpce(_, TI)), Atom) :-
+    get(TI, selection_string, Sel),
+    (   Sel == @nil
+    ->  Atom = ''
+    ;   get(Sel, value, Atom)
+    ).
+
 %!  term_screenshot(+T, -Pixels) is semidet.
 %
 %   A coarse sample of the pixels of the whole window.  Two samples of
@@ -4696,13 +4709,17 @@ test(isearch_refuses_the_alternate_screen,
                ]).
 
 %!  select_match(+T, +Text) is det.
+%!  select_match(+T, +Text, +Times) is det.
 %
-%   Select the first occurrence of Text in the buffer.  <-find answers
-%   the index just past a match, which with the length of what was
-%   looked for gives the region ->selection wants.
+%   Select the first, resp. the Times-th, occurrence of Text in the
+%   buffer.  <-find answers the index just past a match, which with the
+%   length of what was looked for gives the region ->selection wants.
 
 select_match(T, Text) :-
-    term_find(T, 0, Text, End),
+    select_match(T, Text, 1).
+
+select_match(T, Text, Times) :-
+    term_find(T, 0, Text, Times, end, @on, @off, End),
     atom_length(Text, Len),
     Start is End-Len,
     term_select(T, Start, End).
@@ -4868,6 +4885,105 @@ test(selection_is_not_looked_for_while_searching,
     assertion(\+ term_has_selection(T)),
     term_highlight(T, 0, Marks),
     assertion(Marks == '').
+
+test(control_r_searches_on_from_the_selection,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  As if the search had been started where the selection is: the
+    %  first ^R steps off it onto the match before it, and what was an
+    %  other match becomes the hit.
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT', 2),
+    term_highlight(T, 0, Before),
+    assertion(Before == '...ooo....SSS'),
+    isearch_key(T, 0'R),
+    term_highlight(T, 0, After),
+    assertion(After == '...HHH....ooo'),
+    term_report(T, Report),
+    assertion(Report == 'ISearch backward: HIT (1/2)').
+
+test(control_s_searches_on_the_other_way,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT'),
+    isearch_key(T, 0'S),
+    term_highlight(T, 0, After),
+    assertion(After == '...ooo....HHH'),
+    term_report(T, Report),
+    assertion(Report == 'ISearch forward: HIT (2/2)').
+
+test(searching_on_is_an_ordinary_search,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Everything the focus function does is there from the first key:
+    %  a repeat walks on, and Escape leaves the hit selected, which
+    %  lights its own matches again.
+    buffer(T, 'aa HIT bb HIT cc\r\nHIT again'),
+    select_match(T, 'HIT', 3),
+    isearch_key(T, 0'R),
+    isearch_key(T, 0'R),
+    term_report(T, Walked),
+    assertion(Walked == 'ISearch backward: HIT (1/3)'),
+    isearch_named_key(T, 'ESC'),
+    term_highlight(T, 0, Row0),
+    assertion(Row0 == '...SSS....ooo'),
+    term_report(T, Report),
+    assertion(Report == 'Selection: HIT (1/3)').
+
+test(giving_up_gives_the_selection_back,
+     [ setup(test_begin(T))
+     ]) :-
+    %  ^G gives back the view and what was picked, so a search one did
+    %  not mean to make costs nothing.
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT', 2),
+    isearch_key(T, 0'R),
+    isearch_key(T, 0'G),
+    term_selection(T, Selected),
+    assertion(Selected == 'HIT'),
+    term_highlight(T, 0, Back),
+    assertion(Back == '...ooo....SSS').
+
+test(searching_on_needs_a_selection_to_look_for,
+     [ setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    %  Without one the method fails, and typedKeyBinding() failing is
+    %  what hands ^S and ^R to whatever is reading from the terminal --
+    %  ^R is the line editor's own history search.
+    T = terminal(_, xpce(_, TI)),
+    buffer(T, 'a b a b a'),
+    term_select(T, @default, @default),
+    assertion(get(TI, selection_string, @nil)),
+    assertion(\+ send(TI, isearch_selection_backward)),
+    select_match(T, a),                     % one character: not looked for
+    assertion(get(TI, selection_string, @nil)),
+    assertion(\+ send(TI, isearch_selection_forward)),
+    term_search_word(T, @on),               % now it is
+    assertion(\+ get(TI, selection_string, @nil)),
+    assertion(send(TI, isearch_selection_forward)),
+    isearch_key(T, 0'G).
+
+test(the_matches_follow_what_is_selected_now,
+     [ setup(test_begin(T))
+     ]) :-
+    %  The text under a selection can change without the selection
+    %  itself moving -- an erase, or a client repainting the screen --
+    %  and what is highlighted is what is selected now, not what was
+    %  selected when the selection was made.
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT'),
+    term_selection_string(T, First),
+    assertion(First == 'HIT'),
+    out(T, '\e[Haa ZAP bb HIT cc'),          % same cells, other text
+    term_selection_string(T, Second),
+    assertion(Second == 'ZAP'),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == '...SSS').
 
 test(selection_matches_only_the_page,
      [ setup(test_begin(T))

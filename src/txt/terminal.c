@@ -370,6 +370,8 @@ static const uchar_t *rlc_over_link(RlcData b, int x, int y);
 static href    *rlc_href_at(RlcData b, int x, int y, int *l, int *c);
 static status	refreshTerminalImage(TerminalImage ti);
 static status	endIsearchTerminalImage(TerminalImage ti, BoolObj keep);
+static status	executeIsearchTerminalImage(TerminalImage ti, Int chr,
+					    bool repeat);
 static bool	rlc_isearching(RlcData b);
 static bool	rlc_is_word_char(RlcData b, int chr);
 static href    *rlc_add_link(RlcTextLine tl, const uchar_t *link,
@@ -1641,8 +1643,19 @@ reportSelectionTerminalImage(TerminalImage ti)
   send(ti, NAME_report, NAME_status, CtoName(""), EAV);
 }
 
+/* Start a search.  `seed' is what to look for, or `@nil' to start with
+ * nothing and take what the user types.
+ *
+ * A seeded search starts from the selection the seed came from rather
+ * than from the caret, and keeps that selection: the next thing it does
+ * is a repeat, and a repeat steps off the hit it is on, which is what
+ * makes the first ^R over a selection land on the match before it.  The
+ * selection is put back if the search is abandoned, so ^G gives back
+ * what was picked as well as the view it was picked in.
+ */
+
 static status
-beginIsearchTerminalImage(TerminalImage ti, Name direction)
+startIsearchTerminalImage(TerminalImage ti, Name direction, StringObj seed)
 { RlcData b = ti->data;
 
   if ( rlc_alt_screen(b) )
@@ -1653,20 +1666,66 @@ beginIsearchTerminalImage(TerminalImage ti, Name direction)
 
   assign(ti, search_direction,      direction);
   assign(ti, search_wrapped_warned, OFF);
-  assign(ti, search_string,         NIL);
   assign(ti, focus_function,        NAME_Isearch);
 
-  b->isearch.origin_line  = b->caret_y;
-  b->isearch.origin_char  = b->caret_x;
-  b->isearch.base_line    = b->caret_y;
-  b->isearch.base_char    = b->caret_x;
   b->isearch.window_start = b->window_start;
+  b->isearch.seeded       = notNil(seed);
 
-  rlc_set_selection(b, 0, 0, 0, 0);
+  if ( isNil(seed) )
+  { assign(ti, search_string, NIL);
+
+    b->isearch.origin_line = b->caret_y;
+    b->isearch.origin_char = b->caret_x;
+
+    rlc_set_selection(b, 0, 0, 0, 0);
+  } else
+  { /* A copy: the search edits its string as the user types and
+     * backspaces, and <-selection_string is not its to edit.
+     */
+    assign(ti, search_string,
+	   newObject(ClassString, name_procent_s, seed, EAV));
+
+    b->isearch.origin_line     = b->sel_start_line;
+    b->isearch.origin_char     = b->sel_start_char;
+    b->isearch.held_start_line = b->sel_start_line;
+    b->isearch.held_start_char = b->sel_start_char;
+    b->isearch.held_end_line   = b->sel_end_line;
+    b->isearch.held_end_char   = b->sel_end_char;
+  }
+
+  b->isearch.base_line = b->isearch.origin_line;
+  b->isearch.base_char = b->isearch.origin_char;
+
   reportIsearchTerminalImage(ti, 0, 0);
 
   succeed;
 }
+
+static status
+beginIsearchTerminalImage(TerminalImage ti, Name direction)
+{ return startIsearchTerminalImage(ti, direction, NIL);
+}
+
+/* Search on from the selection for what it holds: the matches that are
+ * already lit up (see rlc_selection_needle()) are the ones this walks,
+ * and it is the ordinary incremental search from there on.  Fails when
+ * there is no such selection, which is what lets ^S and ^R keep their
+ * ordinary meaning for whatever is reading from the terminal.
+ */
+
+static status
+isearchSelectionTerminalImage(TerminalImage ti, Name direction)
+{ StringObj seed = ti->selection_string;
+
+  if ( isNil(seed) )
+    fail;
+
+  if ( !startIsearchTerminalImage(ti, direction, seed) )
+    fail;
+
+  executeIsearchTerminalImage(ti, DEFAULT, true);
+  succeed;			/* the search has the key from here on, */
+}				/* whether or not it found anything */
 
 /* Leave the search.  `keep' says whether the hit stays selected: ^G
  * gives back the view and the selection the search started from, any
@@ -1686,23 +1745,35 @@ endIsearchTerminalImage(TerminalImage ti, BoolObj keep)
   b->changed |= CHG_CHANGED;		/* the matches all over the page go */
 
   if ( keep == OFF )
-  { rlc_set_selection(b, 0, 0, 0, 0);
-    /* Only if the line we started from is still in the ring: output
-     * during the search may have pushed it out, and a stale index
-     * counts as a line like any other.
+  { /* Only what is still in the ring: output during the search may have
+     * pushed the lines we started from out, and a stale index counts as
+     * a line like any other.  A search that started from a selection
+     * gives that selection back; one that started from the caret had
+     * none to give.
      */
+    if ( b->isearch.seeded &&
+	 rlc_between(b, b->first, b->last, b->isearch.held_start_line) &&
+	 rlc_between(b, b->first, b->last, b->isearch.held_end_line) )
+      rlc_set_selection(b, b->isearch.held_start_line,
+			 b->isearch.held_start_char,
+			 b->isearch.held_end_line,
+			 b->isearch.held_end_char);
+    else
+      rlc_set_selection(b, 0, 0, 0, 0);
+
     if ( rlc_between(b, b->first, b->last, b->isearch.window_start) )
       rlc_scroll_lines(b, ( rlc_count_lines(b, b->first,
 					    b->isearch.window_start) -
 			    rlc_count_lines(b, b->first, b->window_start) ));
   }
+  b->isearch.seeded = false;
 
   /* The hit that stays selected is a selection like any other, so the
    * matches the search was showing carry straight over to the ones the
-   * selection shows rather than blinking out under the cursor.  The
-   * needle could not be set while the search ran; now it can.
+   * selection shows rather than blinking out under the cursor: the
+   * needle could not be set while the search ran, and the redraw sets
+   * it now that the focus function has let go.
    */
-  rlc_update_selection_string(b);
   rlc_request_redraw(b);
   reportSelectionTerminalImage(ti);	/* hides the bar when there is */
 					/* nothing to say */
@@ -1817,11 +1888,10 @@ searchAgainTerminalImage(TerminalImage ti)
    *
    * The page is damaged whether or not the needle changed: these change
    * which places on it match without changing what is looked for, and
-   * rlc_update_selection_string() only damages when the string moved.
+   * the redraw only damages when the string itself moved.
    */
   if ( rlc_has_selection(b) )
-  { rlc_update_selection_string(b);
-    b->changed |= CHG_CHANGED;
+  { b->changed |= CHG_CHANGED;
     rlc_request_redraw(b);
     reportSelectionTerminalImage(ti);
   }
@@ -1849,6 +1919,16 @@ isearchForwardTerminalImage(TerminalImage ti)
 static status
 isearchBackwardTerminalImage(TerminalImage ti)
 { return beginIsearchTerminalImage(ti, NAME_backward);
+}
+
+static status
+isearchSelectionForwardTerminalImage(TerminalImage ti)
+{ return isearchSelectionTerminalImage(ti, NAME_forward);
+}
+
+static status
+isearchSelectionBackwardTerminalImage(TerminalImage ti)
+{ return isearchSelectionTerminalImage(ti, NAME_backward);
 }
 
 /* Take the word behind the hit into the search string, the way ^W does
@@ -2655,6 +2735,12 @@ static senddecl send_terminal_image[] =
      NAME_search, "Start an incremental search towards the end"),
   SM(NAME_isearchBackward, 0, NULL, isearchBackwardTerminalImage,
      NAME_search, "Start an incremental search towards the start"),
+  SM(NAME_isearchSelectionForward, 0, NULL,
+     isearchSelectionForwardTerminalImage,
+     NAME_search, "Search on from the selection towards the end"),
+  SM(NAME_isearchSelectionBackward, 0, NULL,
+     isearchSelectionBackwardTerminalImage,
+     NAME_search, "Search on from the selection towards the start"),
   SM(NAME_Isearch, 1, "event", IsearchTerminalImage,
      NAME_search, "Focus function of an incremental search"),
   SM(NAME_send, 1, "text=char_array", sendTerminalImage,
@@ -3074,10 +3160,8 @@ rlc_set_selection(RlcData b, int sl, int sc, int el, int ec)
   b->sel_end_line   = el;
   b->sel_end_char   = ec;
 
-					/* ... say what to highlight ... */
-  rlc_update_selection_string(b);
-
-					/* ... and request a repaint */
+					/* ... and request a repaint, which */
+					/* says what to highlight as well */
   rlc_request_redraw(b);
 }
 
@@ -3577,10 +3661,11 @@ rlc_str_eq_tchar(PceString s, const uchar_t *text)
 }
 
 /* Keep <-selection_string on what rlc_match_spans() should look for.
- * Called for every change of the selection, which is every mouse-motion
- * event of a drag, so it does as little as it can: reading the selected
- * text is a walk over the selection, and neither the string object nor
- * the repaint happens unless the text actually changed.
+ * Called from rlc_request_redraw(), so for every change of the
+ * selection and for every batch of output, and it does as little as it
+ * can: reading the selected text is a walk over the selection, and
+ * neither the string object nor the repaint happens unless the text
+ * actually changed.
  *
  * That repaint has to be the whole page.  Unlike the selection, whose
  * lines rlc_set_selection() can name, a match can be on any line of the
@@ -4809,6 +4894,15 @@ static void
 rlc_request_redraw(RlcData b)
 { TerminalImage ti = b->object;
 
+  /* Here rather than in rlc_set_selection(): the text under a selection
+   * can change without the selection itself moving -- an erase, or a
+   * client that repaints the screen -- and the matches must be of what
+   * is selected now, not of what was selected when it was made.  This
+   * runs before the damage is looked at, so what it finds is painted in
+   * the same pass.  It costs nothing while nothing is selected.
+   */
+  rlc_update_selection_string(b);
+
   if ( b->changed & CHG_CHANGED )
   { changedEntireImageGraphical(ti);
     rlc_place_caret(b);
@@ -5273,6 +5367,10 @@ rlc_resize(RlcData b, int w, int h)
 					      b->isearch.origin_char);
   rlc_textpos isbase    = rlc_save_textpos(b, b->isearch.base_line,
 					      b->isearch.base_char);
+  rlc_textpos isheld_s  = rlc_save_textpos(b, b->isearch.held_start_line,
+					      b->isearch.held_start_char);
+  rlc_textpos isheld_e  = rlc_save_textpos(b, b->isearch.held_end_line,
+					      b->isearch.held_end_char);
 
   b->window_size = h;
   b->width = w;
@@ -5373,6 +5471,10 @@ rlc_resize(RlcData b, int w, int h)
 				    &b->isearch.origin_char);
   rlc_restore_textpos(b, isbase,    &b->isearch.base_line,
 				    &b->isearch.base_char);
+  rlc_restore_textpos(b, isheld_s,  &b->isearch.held_start_line,
+				    &b->isearch.held_start_char);
+  rlc_restore_textpos(b, isheld_e,  &b->isearch.held_end_line,
+				    &b->isearch.held_end_char);
 
   /* Clamp caret_x: typing at 80 cols can leave caret_x up to 80 in
    * the pending-wrap position; after shrinking to 25 cols the cap
