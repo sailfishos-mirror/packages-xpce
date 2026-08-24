@@ -362,6 +362,9 @@ static uchar_t   *rlc_read_from_window(RlcData b, int sl, int sc,
 				       int el, int ec, const char *sep);
 static void	rlc_free(void *ptr);
 static void	rlc_set_selection(RlcData b, int sl, int sc, int el, int ec);
+static void	rlc_update_selection_string(RlcData b);
+static void	reportSelectionTerminalImage(TerminalImage ti);
+static bool	rlc_alt_screen(RlcData b);
 static const uchar_t *rlc_clicked_link(RlcData b, int x, int y);
 static const uchar_t *rlc_over_link(RlcData b, int x, int y);
 static href    *rlc_href_at(RlcData b, int x, int y, int *l, int *c);
@@ -422,16 +425,16 @@ static ssize_t	ucs_find(RlcData b, const uchar_t *text, size_t len,
 			 bool exact_case, bool word);
 
 typedef struct				/* A range of cells on a line; see */
-{ int line;				/* rlc_isearch_spans() */
+{ int line;				/* rlc_match_spans() */
   int from;
   int to;
 } rlc_span;
 
-#define MAX_ISEARCH_SPANS 512
+#define MAX_MATCH_SPANS 512
 
 static int	rlc_overlay_width(RlcData b);
 static bool	rlc_line_in_selection(RlcData b, int line);
-static int	rlc_isearch_spans(RlcData b, rlc_span *spans, int max);
+static int	rlc_match_spans(RlcData b, rlc_span *spans, int max);
 static void	rlc_line_overlay(RlcData b, int line, RlcTextLine tl,
 				 bool insel, const rlc_span *spans,
 				 int nspans, Style *overlay);
@@ -485,6 +488,7 @@ initialiseTerminalImage(TerminalImage ti, Int w, Int h)
   assign(ti, armed_link, OFF);
   assign(ti, focus_function, NIL);
   assign(ti, search_string, NIL);
+  assign(ti, selection_string, NIL);
   assign(ti, search_direction, NAME_backward);
   assign(ti, search_wrapped_warned, OFF);
   assign(ti, working_directory, NIL);
@@ -998,6 +1002,12 @@ eventTerminalImage(TerminalImage ti, EventObj ev)
 	send(ti, NAME_copy, EAV);
     } else				/* a click, not a drag */
       rlc_caret_to_click(b, valInt(x), valInt(y));
+    /* Not from rlc_set_selection(): the tally is over the whole
+     * scroll-back, which is too much to count for every motion event of
+     * a drag, and a number that flickers while the selection is still
+     * being made is not one to read anyway.
+     */
+    reportSelectionTerminalImage(ti);
     succeed;
   }
   if ( isAEvent(ev, NAME_msLeftDrag) )
@@ -1017,6 +1027,7 @@ eventTerminalImage(TerminalImage ti, EventObj ev)
       if ( rlc_has_selection(b) &&
 	   getClassVariableValueObject(ti, NAME_autoCopy) )
 	send(ti, NAME_copy, EAV);
+      reportSelectionTerminalImage(ti);
       succeed;
     }
   }
@@ -1242,6 +1253,7 @@ static status
 selectAllTerminalImage(TerminalImage ti)
 { RlcData b = ti->data;
   rlc_select_all(b);
+  reportSelectionTerminalImage(ti);
   succeed;
 }
 
@@ -1366,6 +1378,7 @@ selectionTerminalImage(TerminalImage ti, Int from, Int to)
 
   if ( isDefault(from) && isDefault(to) )
   { rlc_set_selection(b, 0, 0, 0, 0);
+    reportSelectionTerminalImage(ti);
     succeed;
   }
 
@@ -1395,6 +1408,7 @@ selectionTerminalImage(TerminalImage ti, Int from, Int to)
 
   rlc_free(text);
   rlc_free(pos);
+  reportSelectionTerminalImage(ti);
   succeed;
 }
 
@@ -1554,8 +1568,8 @@ reportIsearchTerminalImage(TerminalImage ti, int index, int total)
  */
 
 static int
-rlc_isearch_count(RlcData b, const uchar_t *text, size_t len, PceString str,
-		  bool exact_case, bool word, ssize_t hit, int *index)
+rlc_match_count(RlcData b, const uchar_t *text, size_t len, PceString str,
+		bool exact_case, bool word, ssize_t hit, int *index)
 { int total = 0;
   ssize_t at = 0;
 
@@ -1571,6 +1585,60 @@ rlc_isearch_count(RlcData b, const uchar_t *text, size_t len, PceString str,
   }
 
   return total;
+}
+
+/* Say on the bar how many other places the selection occurs, in the
+ * shape an incremental search reports its hit in and counted the same
+ * way: over the whole buffer, most of which is off the screen, while
+ * what is highlighted is the page.
+ *
+ * A selection that occurs nowhere else says nothing at all -- there is
+ * nothing to walk to, and a plain selection is what the user asked for
+ * by making it.  Neither does one we do not look for (see
+ * rlc_selection_needle()); both take the bar down again, as leaving a
+ * tally up for a selection that is gone would be worse than saying
+ * nothing.
+ *
+ * Whole-word matching can put the selection itself outside the matches
+ * -- it is not a word where it sits, but the same letters are a word
+ * elsewhere -- and then there is no `n of' to give.
+ */
+
+static void
+reportSelectionTerminalImage(TerminalImage ti)
+{ RlcData b = ti->data;
+  StringObj s = ti->selection_string;
+
+  if ( notNil(s) )
+  { size_t len;
+    rlc_pos *pos;
+    uchar_t *text = rlc_buffer_text(b, &len, &pos);
+
+    if ( text )
+    { ssize_t hit = rlc_index_at(pos, len,
+				 b->sel_start_line, b->sel_start_char);
+      int index;
+      int total = rlc_match_count(b, text, len, &s->data,
+				  ti->exact_case == ON,
+				  ti->search_word == ON, hit, &index);
+
+      rlc_free(text);
+      rlc_free(pos);
+
+      if ( total > 1 )
+      { if ( index > 0 )
+	  send(ti, NAME_report, NAME_status,
+	       CtoName("Selection: %s (%d/%d)"),
+	       s, toInt(index), toInt(total), EAV);
+	else
+	  send(ti, NAME_report, NAME_status,
+	       CtoName("Selection: %s (%d matches)"), s, toInt(total), EAV);
+	return;
+      }
+    }
+  }
+
+  send(ti, NAME_report, NAME_status, CtoName(""), EAV);
 }
 
 static status
@@ -1628,9 +1696,16 @@ endIsearchTerminalImage(TerminalImage ti, BoolObj keep)
 					    b->isearch.window_start) -
 			    rlc_count_lines(b, b->first, b->window_start) ));
   }
-  rlc_request_redraw(b);
-  send(ti, NAME_report, NAME_status, CtoName(""), EAV);
 
+  /* The hit that stays selected is a selection like any other, so the
+   * matches the search was showing carry straight over to the ones the
+   * selection shows rather than blinking out under the cursor.  The
+   * needle could not be set while the search ran; now it can.
+   */
+  rlc_update_selection_string(b);
+  rlc_request_redraw(b);
+  reportSelectionTerminalImage(ti);	/* hides the bar when there is */
+					/* nothing to say */
   succeed;
 }
 
@@ -1706,8 +1781,8 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
     rlc_pos pe = rlc_pos_end(pos, end);
 
     int index;
-    int total = rlc_isearch_count(b, text, len, &ti->search_string->data,
-				  ec, wm, hit, &index);
+    int total = rlc_match_count(b, text, len, &ti->search_string->data,
+				ec, wm, hit, &index);
 
     rlc_set_selection(b, ps.line, ps.cell, pe.line, pe.cell);
     send(ti, NAME_scrollTo, toInt(hit), EAV);
@@ -1731,8 +1806,25 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
 
 static status
 searchAgainTerminalImage(TerminalImage ti)
-{ if ( rlc_isearching(ti->data) && notNil(ti->search_string) )
+{ RlcData b = ti->data;
+
+  if ( rlc_isearching(b) && notNil(ti->search_string) )
     return executeIsearchTerminalImage(ti, DEFAULT, false);
+
+  /* They decide what a selection matches as well.  ->search_word also
+   * decides whether a one-character selection is looked for at all, so
+   * the needle itself has to be worked out again, not just the tally.
+   *
+   * The page is damaged whether or not the needle changed: these change
+   * which places on it match without changing what is looked for, and
+   * rlc_update_selection_string() only damages when the string moved.
+   */
+  if ( rlc_has_selection(b) )
+  { rlc_update_selection_string(b);
+    b->changed |= CHG_CHANGED;
+    rlc_request_redraw(b);
+    reportSelectionTerminalImage(ti);
+  }
 
   succeed;
 }
@@ -1946,8 +2038,8 @@ getCellStyleTerminalImage(TerminalImage ti, Int column, Int row)
 
   int line = rlc_add_lines(b, b->window_start, r);
   RlcTextLine tl = &b->lines[line];
-  rlc_span spans[MAX_ISEARCH_SPANS];
-  int nspans = rlc_isearch_spans(b, spans, MAX_ISEARCH_SPANS);
+  rlc_span spans[MAX_MATCH_SPANS];
+  int nspans = rlc_match_spans(b, spans, MAX_MATCH_SPANS);
   Style overlay[MAXLINE];
 
   rlc_line_overlay(b, line, tl, rlc_line_in_selection(b, line),
@@ -2066,6 +2158,7 @@ getCwidthTerminalImage(TerminalImage ti, Int chr)
 static status
 clearSelectionTerminalImage(TerminalImage ti)
 { rlc_set_selection(ti->data, 0, 0, 0, 0);
+  reportSelectionTerminalImage(ti);
   succeed;
 }
 
@@ -2493,6 +2586,8 @@ static vardecl var_terminal_image[] =
      NAME_event, "Method that gets the keys while it succeeds"),
   IV(NAME_searchString, "string*", IV_GET,
      NAME_search, "What the incremental search is looking for"),
+  IV(NAME_selectionString, "string*", IV_GET,
+     NAME_search, "Selection whose other occurrences are highlighted"),
   IV(NAME_searchDirection, "{forward,backward}", IV_GET,
      NAME_search, "Direction of the incremental search"),
   IV(NAME_searchWrappedWarned, "bool", IV_NONE,
@@ -2979,6 +3074,9 @@ rlc_set_selection(RlcData b, int sl, int sc, int el, int ec)
   b->sel_end_line   = el;
   b->sel_end_char   = ec;
 
+					/* ... say what to highlight ... */
+  rlc_update_selection_string(b);
+
 					/* ... and request a repaint */
   rlc_request_redraw(b);
 }
@@ -3405,6 +3503,119 @@ rlc_copy(RlcData b, Name to)	/* NAME_clipboard or NAME_primary */
 }
 
 
+/* Selecting text says what to look for as well as what to copy: the
+ * other places it occurs on the page are shown the way the other
+ * matches of an incremental search are, so that picking out a variable
+ * or an atom finds the rest of them without typing it again.
+ *
+ * Not every selection is one to look for.  A drag over blank space, or
+ * one that runs past the end of a line, would light up most of the
+ * screen; so would a single character, unless whole-word matching is on
+ * and a single character can be a word of its own.  Those stay a plain
+ * selection.
+ *
+ * The text, rlc_malloc()ed for the caller to free, or NULL if this is
+ * not a selection we look for.
+ */
+
+#define SEL_MATCH_MAX 100		/* longest selection we look for */
+
+static uchar_t *
+rlc_selection_needle(RlcData b)
+{ TerminalImage ti = b->object;
+
+  if ( !ti ||
+       rlc_isearching(b) ||		/* the search owns the overlay */
+       rlc_alt_screen(b) ||		/* the application owns the window */
+       !rlc_has_selection(b) )
+    return NULL;
+
+  uchar_t *sel = rlc_read_from_window(b,
+				      b->sel_start_line, b->sel_start_char,
+				      b->sel_end_line,   b->sel_end_char,
+				      "\n");
+  if ( !sel )
+    return NULL;
+
+  size_t len = 0;
+  bool blank = true;
+  for(uchar_t *q = sel; *q; q++)
+  { if ( *q == '\n' )			/* more than a line: too much */
+    { len = SEL_MATCH_MAX+1;
+      break;
+    }
+    if ( !iswspace(*q) )
+      blank = false;
+    len++;
+  }
+
+  if ( blank || len > SEL_MATCH_MAX ||
+       (len < 2 && ti->search_word != ON) )
+  { rlc_free(sel);
+    return NULL;
+  }
+
+  return sel;
+}
+
+/* Is `s' the same text as the 0-terminated `text'?  What we have to
+ * compare is a string object against a freshly read selection, and
+ * making a string object of the latter just to throw it away again is
+ * what this is here to avoid.
+ */
+
+static bool
+rlc_str_eq_tchar(PceString s, const uchar_t *text)
+{ size_t i;
+
+  for(i=0; i<(size_t)s->s_size; i++)
+  { if ( !text[i] || str_fetch(s, i) != text[i] )
+      return false;
+  }
+
+  return text[i] == 0;
+}
+
+/* Keep <-selection_string on what rlc_match_spans() should look for.
+ * Called for every change of the selection, which is every mouse-motion
+ * event of a drag, so it does as little as it can: reading the selected
+ * text is a walk over the selection, and neither the string object nor
+ * the repaint happens unless the text actually changed.
+ *
+ * That repaint has to be the whole page.  Unlike the selection, whose
+ * lines rlc_set_selection() can name, a match can be on any line of the
+ * page, and a redraw only paints the lines that say they changed.
+ */
+
+static void
+rlc_update_selection_string(RlcData b)
+{ TerminalImage ti = b->object;
+
+  if ( !ti )
+    return;
+
+  uchar_t *sel = rlc_selection_needle(b);
+  StringObj old = ti->selection_string;
+
+  if ( !sel )
+  { if ( notNil(old) )
+    { assign(ti, selection_string, NIL);
+      b->changed |= CHG_CHANGED;
+    }
+    return;
+  }
+
+  if ( notNil(old) && rlc_str_eq_tchar(&old->data, sel) )
+  { rlc_free(sel);			/* nothing on the page changes */
+    return;
+  }
+
+  assign(ti, selection_string, TCHAR2String(sel));
+  b->changed |= CHG_CHANGED;
+  rlc_free(sel);
+}
+
+
 		 /*******************************
 		 *            SEARCH            *
 		 *******************************/
@@ -3567,30 +3778,53 @@ ucs_match(RlcData b, const uchar_t *text, size_t len, ssize_t here,
  * on the hit made every repeat find the same place again.
  */
 
-/* Every place on the visible page where the search string occurs, as
- * cell ranges: a match that crosses a wrap makes one of these per line.
+/* The string the page is highlighted for: what an incremental search is
+ * looking for while one is running, and otherwise the selection, when
+ * it is one we show the other occurrences of (see
+ * rlc_selection_needle()).  NULL if the page carries no matches.
  *
- * The painter asks for this while it draws, rather than the search
- * keeping a list up to date.  A redraw walks every row of the page
- * anyway, so looking through the page for the search string as well
+ * A search owns the overlay while it runs -- the hit is the selection,
+ * and matching the selection as well would be matching the same string
+ * twice.
+ */
+
+static PceString
+rlc_match_string(RlcData b)
+{ TerminalImage ti = b->object;
+
+  if ( !ti )
+    return NULL;
+  if ( rlc_isearching(b) )
+    return isNil(ti->search_string) ? NULL : &ti->search_string->data;
+
+  return isNil(ti->selection_string) ? NULL : &ti->selection_string->data;
+}
+
+/* Every place on the visible page where that string occurs, as cell
+ * ranges: a match that crosses a wrap makes one of these per line.
+ *
+ * The painter asks for this while it draws, rather than the search or
+ * the selection keeping a list up to date.  A redraw walks every row of
+ * the page anyway, so looking through the page for the string as well
  * costs a constant factor and no bookkeeping: nothing to invalidate
  * when a line is recycled or the window rewrapped, and nothing left
- * behind when the search ends.
+ * behind when the search ends or the selection goes.
  *
  * What it does cost is the damage.  A redraw only *paints* the lines
- * that say they changed, and a match can be on any of them, so a
- * search step marks the whole window changed (see
- * executeIsearchTerminalImage()).
+ * that say they changed, and a match can be on any of them, so both the
+ * things that can change the string mark the whole window changed (see
+ * executeIsearchTerminalImage() and rlc_update_selection_string()).
  */
 
 static int
-rlc_isearch_spans(RlcData b, rlc_span *spans, int max)
+rlc_match_spans(RlcData b, rlc_span *spans, int max)
 { TerminalImage ti = b->object;
+  PceString needle = rlc_match_string(b);
   int n = 0;
 
-  if ( !rlc_isearching(b) || isNil(ti->search_string) )
+  if ( !needle )
     return 0;
-  size_t slen = valInt(getSizeCharArray(ti->search_string));
+  size_t slen = needle->s_size;
   if ( slen == 0 )
     return 0;
 
@@ -3616,8 +3850,7 @@ rlc_isearch_spans(RlcData b, rlc_span *spans, int max)
   ssize_t here = 0;
 
   while( n < max )
-  { ssize_t hit = ucs_find(b, text, len, here, &ti->search_string->data,
-			   1, 'a', ec, wm);
+  { ssize_t hit = ucs_find(b, text, len, here, needle, 1, 'a', ec, wm);
     if ( hit < 0 )
       break;
 
@@ -3648,7 +3881,7 @@ rlc_isearch_spans(RlcData b, rlc_span *spans, int max)
     }
 
     here = hit+1;			/* every place it occurs, as the */
-  }					/* count does; see rlc_isearch_count() */
+  }					/* count does; see rlc_match_count() */
 
   rlc_free(text);
   rlc_free(pos);
@@ -4442,8 +4675,10 @@ rlc_paint_text(RlcData b,
 }
 
 /* Which style, if any, is painted over each visual column of a line.
- * The other matches of a running search go in first and the selection
- * over them, so the hit the user is on wins where they meet.
+ * The other matches go in first and the selection over them, so the hit
+ * the user is on wins where they meet -- and so the occurrence that is
+ * the selection keeps the selection style rather than becoming one of
+ * its own matches.
  *
  * The selection is a range over lines rather than within one, so a line
  * wholly inside it takes the style throughout; `insel' says whether the
@@ -4515,8 +4750,8 @@ rlc_redraw(RlcData b, int x, int y, int w, int h)
   int el = b->window_size;
   int l = rlc_add_lines(b, b->window_start, sl);
   int pl = sl;				/* physical line */
-  rlc_span spans[MAX_ISEARCH_SPANS];
-  int nspans = rlc_isearch_spans(b, spans, MAX_ISEARCH_SPANS);
+  rlc_span spans[MAX_MATCH_SPANS];
+  int nspans = rlc_match_spans(b, spans, MAX_MATCH_SPANS);
   Style overlay[MAXLINE];
 
   r_background(ti->background);

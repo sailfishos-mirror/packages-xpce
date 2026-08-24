@@ -175,6 +175,7 @@ terminal_test_unit(terminal_mouse_reports).
 terminal_test_unit(terminal_wrap).
 terminal_test_unit(terminal_search).
 terminal_test_unit(terminal_isearch).
+terminal_test_unit(terminal_selection_matches).
 terminal_test_unit(terminal_resize).
 terminal_test_unit(terminal_control_keys).
 terminal_test_unit(terminal_function_keys).
@@ -597,6 +598,29 @@ term_report(terminal(_, xpce(_, TI)), Text) :-
     get(Bar, member, text, Item),
     get(Item, string, String),
     get(String, value, Text).
+
+%!  term_report_shown(+T) is semidet.
+%
+%   True when the bar is up at all.  <-term_report answers whatever was
+%   last put on it, message or none, so having nothing to say has to be
+%   told apart from saying nothing.
+
+term_report_shown(terminal(_, xpce(_, TI))) :-
+    get(TI, device, Window),
+    get(Window, member, epilog_report, Bar),
+    get(Bar, displayed, @on).
+
+%!  term_exact_case(+T, +Bool) is det.
+%!  term_search_word(+T, +Bool) is det.
+%
+%   Set what counts as a match, for a search and for a selection alike.
+%   They outlive both, so a test that sets one must put it back.
+
+term_exact_case(terminal(_, xpce(_, TI)), Bool) :-
+    send(TI, exact_case, Bool).
+
+term_search_word(terminal(_, xpce(_, TI)), Bool) :-
+    send(TI, search_word, Bool).
 
 %!  term_highlight(+T, +Row, -Marks) is det.
 %
@@ -4193,11 +4217,9 @@ test(scroll_to_fails_on_the_alternate_screen,
     evidence: a key that leaked to the client comes back as output.
 */
 
-:- begin_tests(terminal_isearch,
-               [ condition(needs([program_output, selection])),
-                 setup(setup_unit),
-                 cleanup(cleanup_unit)
-               ]).
+		 /*******************************
+		 *      DRIVING A SEARCH        *
+		 *******************************/
 
 %!  isearch(+T) is det.
 %!  isearch_key(+T, +Key) is det.
@@ -4265,6 +4287,12 @@ screen_row(T, Text, Row) :-
     between(0, Last, Row),
     row_text(T, Row, Text),
     !.
+
+:- begin_tests(terminal_isearch,
+               [ condition(needs([program_output, selection])),
+                 setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
 
 test(isearch_selects_what_it_finds,
      [ setup(test_begin(T)),
@@ -4656,6 +4684,230 @@ test(isearch_refuses_the_alternate_screen,
     assert_row(T, 0, 'ALT-SCREEN').
 
 :- end_tests(terminal_isearch).
+
+		 /*******************************
+		 *      SELECTION MATCHES       *
+		 *******************************/
+
+:- begin_tests(terminal_selection_matches,
+               [ condition(needs([program_output, selection])),
+                 setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
+
+%!  select_match(+T, +Text) is det.
+%
+%   Select the first occurrence of Text in the buffer.  <-find answers
+%   the index just past a match, which with the length of what was
+%   looked for gives the region ->selection wants.
+
+select_match(T, Text) :-
+    term_find(T, 0, Text, End),
+    atom_length(Text, Len),
+    Start is End-Len,
+    term_select(T, Start, End).
+
+%!  match_options(+T) is det.
+%
+%   Put back what counts as a match.  Both flags outlive the selection
+%   that used them, as they outlive a search.
+
+match_options(T) :-
+    term_exact_case(T, @off),
+    term_search_word(T, @off).
+
+test(selection_highlights_the_other_matches,
+     [ setup(test_begin(T))
+     ]) :-
+    %  What a search shows while it runs, without having to type what
+    %  is already on the screen: the selection in its own style and the
+    %  other places it occurs in the style of a search's other matches.
+    buffer(T, 'aa HIT bb HIT cc\r\nsecond HIT line'),
+    select_match(T, 'HIT'),
+    term_highlight(T, 0, First),
+    term_highlight(T, 1, Second),
+    assertion(First  == '...SSS....ooo'),
+    assertion(Second == '.......ooo').
+
+test(dragging_out_a_word_looks_for_it,
+     [ condition(needs([mouse])),
+       setup(test_begin(T))
+     ]) :-
+    %  The way a selection is really made: the highlight follows the
+    %  drag, and the tally arrives when the button comes up.
+    buffer(T, 'aa HIT bb HIT cc'),
+    term_drag(T, 3, 0, 6, 0),
+    term_selection(T, Selected),
+    assertion(Selected == 'HIT'),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == '...SSS....ooo'),
+    term_report(T, Report),
+    assertion(Report == 'Selection: HIT (1/2)').
+
+test(selection_reports_how_many_there_are,
+     [ setup(test_begin(T))
+     ]) :-
+    buffer(T, 'aa HIT bb HIT cc\r\nsecond HIT line'),
+    select_match(T, 'HIT'),
+    term_report(T, Report),
+    assertion(Report == 'Selection: HIT (1/3)').
+
+test(selection_that_occurs_once_says_nothing,
+     [ setup(test_begin(T))
+     ]) :-
+    %  Nowhere to walk to, so a plain selection and an empty bar.
+    buffer(T, 'alpha beta gamma'),
+    select_match(T, beta),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == '......SSSS'),
+    assertion(\+ term_report_shown(T)).
+
+test(selection_highlight_goes_with_the_selection,
+     [ setup(test_begin(T))
+     ]) :-
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT'),
+    term_highlight(T, 0, Selected),
+    assertion(Selected == '...SSS....ooo'),
+    term_select(T, @default, @default),
+    term_highlight(T, 0, Cleared),
+    assertion(Cleared == ''),
+    assertion(\+ term_report_shown(T)).
+
+test(blank_selection_is_not_looked_for,
+     [ setup(test_begin(T))
+     ]) :-
+    %  A drag over the space between words would otherwise light up
+    %  every gap on the page.
+    buffer(T, 'aa  bb  cc'),
+    term_select(T, 2, 4),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == '..SS'),
+    assertion(\+ term_report_shown(T)).
+
+test(selection_over_a_line_break_is_not_looked_for,
+     [ setup(test_begin(T))
+     ]) :-
+    %  More than a line is not the kind of thing one picks out to find
+    %  the rest of.
+    buffer(T, 'HIT one\r\nHIT two'),
+    term_find(T, 0, one, One),
+    term_find(T, One, 'HIT', Second),
+    Start is One-3,
+    term_select(T, Start, Second),
+    term_highlight(T, 0, First),
+    assertion(sub_atom(First, 0, 4, _, '....')).
+
+test(single_character_needs_word_mode,
+     [ setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    %  One character matches far too much to be worth showing, unless
+    %  whole-word matching is on and one character can be a word.
+    buffer(T, 'a b a b a'),
+    select_match(T, a),
+    term_highlight(T, 0, Plain),
+    assertion(Plain == 'S'),
+    term_search_word(T, @on),
+    term_highlight(T, 0, Worded),
+    assertion(Worded == 'S...o...o').
+
+test(selection_follows_the_case_box,
+     [ setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    buffer(T, 'Hit hit HIT'),
+    select_match(T, 'Hit'),
+    term_highlight(T, 0, Insensitive),
+    assertion(Insensitive == 'SSS.ooo.ooo'),
+    term_exact_case(T, @on),
+    term_highlight(T, 0, Sensitive),
+    assertion(Sensitive == 'SSS').
+
+test(selection_shows_the_match_boxes,
+     [ setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    %  The two boxes decide what the tally counted, so they belong with
+    %  it as they belong with a search.
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT'),
+    term_search_options(T, None),
+    assertion(None == []),
+    term_exact_case(T, @on),
+    term_search_options(T, Cased),
+    assertion(Cased == [exact_case]).
+
+test(selection_takes_over_from_the_search,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  Ending a search on its hit leaves that hit selected, so the
+    %  matches it was showing become the matches the selection shows
+    %  rather than blinking out.
+    buffer(T, 'aa HIT bb HIT cc'),
+    isearch(T),
+    isearch_type(T, 'HIT'),
+    term_highlight(T, 0, Searching),
+    assertion(Searching == '...ooo....HHH'),
+    isearch_named_key(T, 'ESC'),
+    term_highlight(T, 0, Selected),
+    assertion(Selected == '...ooo....SSS'),
+    term_report(T, Report),
+    assertion(Report == 'Selection: HIT (2/2)').
+
+test(selection_is_not_looked_for_while_searching,
+     [ setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  The search owns the overlay: the hit is the selection, and
+    %  matching it as well would be matching the same string twice.
+    buffer(T, 'aa HIT bb HIT cc'),
+    select_match(T, 'HIT'),
+    isearch(T),
+    assertion(\+ term_has_selection(T)),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == '').
+
+test(selection_matches_only_the_page,
+     [ setup(test_begin(T))
+     ]) :-
+    %  As with a search: the painter looks through the page every time
+    %  it draws, and what is in the scroll back is not on it.
+    buffer(T, 'HIT alpha\r\n'),
+    forall(between(1, 50, I), out(T, ['filler', I, '\r\n'])),
+    out(T, 'HIT omega\r\n'),
+    term_length(T, Length),
+    term_find(T, Length, 'HIT', -1, start, @on, @off, Last),
+    End is Last+3,
+    term_select(T, Last, End),
+    assertion(\+ on_screen(T, 'HIT alpha')),
+    forall(( term_rows(T, Rows),
+             LastRow is Rows-1,
+             between(0, LastRow, Row),
+             row_text(T, Row, Text),
+             Text \== 'HIT omega'
+           ),
+           ( term_highlight(T, Row, Marks),
+             assertion(Marks == '')
+           )),
+    term_report(T, Report),
+    assertion(Report == 'Selection: HIT (2/2)').
+
+test(selection_refuses_the_alternate_screen,
+     [ setup(test_begin(T)),
+       cleanup(normal_screen(T))
+     ]) :-
+    %  The ring holds the text under the application, not what is on
+    %  the screen, so there is nothing there to match against.
+    buffer(T, 'aa HIT bb HIT cc'),
+    alt_screen(T, 'HIT HIT'),
+    term_select(T, 0, 3),
+    term_highlight(T, 0, Marks),
+    assertion(\+ sub_atom(Marks, _, _, _, o)).
+
+:- end_tests(terminal_selection_matches).
+
 
 
 		 /*******************************

@@ -1405,12 +1405,18 @@ report(T, Type:name, Fmt:[char_array], Args:any ...) :->
             %  stays until that something says it is done.
             get(T, member, terminal, TI),
             (   get(TI, focus_function, @nil)
-            ->  Transient = @on,
-                send(Bar, show, Type, S, Transient)
-            ;   Transient = @off,
-                send(Bar, show, Type, S, Transient),
-                send(Bar, search_options,
+            ->  Transient = @on
+            ;   Transient = @off
+            ),
+            send(Bar, show, Type, S, Transient),
+            %  The boxes say what counts as a match, which is what a
+            %  search looks for and, when one is up, what the other
+            %  occurrences of the selection are.  ->show takes them
+            %  away again, so they go back after it.
+            (   search_options(TI)
+            ->  send(Bar, search_options,
                      TI?exact_case, TI?search_word)
+            ;   true
             )
         )
     ;   Report =.. [report, Type, Fmt|Args],
@@ -1424,6 +1430,19 @@ report(T, Type:name, Fmt:[char_array], Args:any ...) :->
 
 report_on_bar(status).
 report_on_bar(warning).
+
+%!  search_options(+Terminal) is semidet.
+%
+%   True when the terminal is matching something, so that the two boxes
+%   saying what counts as a match are worth showing: an incremental
+%   search is running, or a selection whose other occurrences are
+%   highlighted.
+
+search_options(TI) :-
+    (   \+ get(TI, focus_function, @nil)
+    ;   \+ get(TI, selection_string, @nil)
+    ),
+    !.
 
 :- pce_end_class(epilog_window).
 

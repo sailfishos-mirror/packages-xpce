@@ -47,11 +47,13 @@ keystrokes and hovered hyperlinks.
     what the user picked with the mouse.
 
 - terminal_image<->isearch_other_style: style*
-    `style` applied to the other matches of a running incremental
-    search that are on the screen, or `@nil` to leave them alone.  Only
-    the visible ones: they are worked out afresh every time the window
-    is painted, so scrolling brings the ones it reaches into view
-    without the search doing anything about it.
+    `style` applied to the matches on the screen other than the one the
+    user is on, or `@nil` to leave them alone.  It serves an incremental
+    search and a selection alike: what a search is looking for while one
+    runs, and otherwise the selected text (see `<-selection_string`).
+    Only the visible ones: they are worked out afresh every time the
+    window is painted, so scrolling brings the ones it reaches into view
+    without the search or the selection doing anything about it.
 
 - terminal_image<->nfd_style: style*
     Style applied to NFD grapheme clusters (e.g. accented composed
@@ -90,6 +92,10 @@ keystrokes and hovered hyperlinks.
 - terminal_image<-search_string: string*
     What the incremental search is looking for, or `@nil`.
 
+- terminal_image<-selection_string: string*
+    The selected text, when it is a selection whose other occurrences
+    are highlighted, and `@nil` when it is not.  See `->selection`.
+
 - terminal_image<-search_direction: {forward,backward}
     Direction the incremental search is going.
 
@@ -100,8 +106,9 @@ keystrokes and hovered hyperlinks.
     Whether the incremental search matches whole words only, in the
     sense of `<-syntax`.
 
-    Both outlive the search that used them, and setting either while
-    one is running looks again at once, so the hit, the tally and what
+    Both decide what counts as a match for a selection as well as for a
+    search.  Both outlive the search that used them, and setting either
+    looks again at once, so the hit or the selection, the tally and what
     is painted all follow.
 
 
@@ -179,6 +186,24 @@ keystrokes and hovered hyperlinks.
     buffer.  Indices out of range are clamped, and endpoints that
     arrive the wrong way round are swapped.
 
+    Selecting text says what to look for as well as what to copy.  The
+    other places the selected text occurs on the screen are painted in
+    `<-isearch_other_style`, the way the other matches of an incremental
+    search are, so that picking out a variable or an atom finds the rest
+    of them without typing it again; `<->exact_case` and `<->search_word`
+    decide what counts as one.  What it reports -- through `->report`,
+    like a search -- says which of the matches the selection is and how
+    many there are, as `Selection: X (2/5)`, counted over the whole
+    buffer while what is painted is the page.
+
+    Not every selection is looked for, and `<-selection_string` says
+    which are.  A selection that occurs nowhere else says nothing and is
+    painted as a plain selection.  Neither is one that is blank, that
+    runs over a line break, that is longer than 100 characters, or that
+    is a single character while `<->search_word` is `@off` -- each of
+    those would light up most of the screen.  Nor is anything looked for
+    on the alternate screen, whose lines are not in the buffer.
+
 - terminal_image->scroll_to: index=int
     Scroll the line holding `index` into view, moving as little as
     possible and doing nothing while the line is already on the screen.
@@ -193,7 +218,10 @@ keystrokes and hovered hyperlinks.
     `<-focus_function`):
 
     The hit is painted in `<-isearch_style` and the other matches on
-    the screen in `<-isearch_other_style`.  What it reports as it goes
+    the screen in `<-isearch_other_style`.  A search owns that feedback
+    while it runs, so the selection's own matches (see `->selection`)
+    are not shown as well; leaving a search with the hit selected hands
+    them straight over.  What it reports as it goes
     -- through `->report`, so where that lands is the window's business
     -- says which of the matches it is on and how many there are, as
     `(3/4)`.  Those are counted over the whole buffer, and from its
@@ -320,8 +348,8 @@ see the scroll-back that came before it.
 - selection_style: yellow background (X) or system selection style.
 - isearch_style: green background.
 - isearch_other_style: pale turquoise background.
-- exact_case, search_word: both `@off`.
-- exact_case: `@off`; the incremental search ignores case.
+- exact_case, search_word: both `@off`, so matching ignores case and
+  does not ask for word boundaries.
 - link_style, link_armed_style: blue, dotted/solid underline.
 - save_lines: 1000 by default.
 - auto_copy: copy selected text to clipboard automatically (default

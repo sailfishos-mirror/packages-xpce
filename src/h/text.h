@@ -317,6 +317,7 @@ NewClass(terminal_image)
   SyntaxTable	syntax;			/* Word description */
   Name		focus_function;		/* Function in focus */
   StringObj	search_string;		/* Target of the search */
+  StringObj	selection_string;	/* Selection we highlight matches of */
   Name		search_direction;	/* Direction of the search */
   BoolObj	search_wrapped_warned;	/* Search hit the end of the buffer */
   BoolObj	exact_case;		/* Search is case sensitive */
