@@ -50,6 +50,7 @@
 #define TXT_GREYED	0x2	/* greyed character */
 #define TXT_BOLDEN	0x4	/* bold character */
 #define TXT_HIDDEN	0x8	/* invisible fragment */
+#define TXT_ITALIC	0x10	/* slanted character */
 
 NewClass(text_buffer)
   ABSTRACT_SOURCE_SINK
