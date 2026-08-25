@@ -1161,14 +1161,32 @@ reset_input(Terminal) :-
 %   situation of a client editing in vi mode.
 
 set_bracketed_paste(Terminal, Bool) :-
+    set_el_option(Terminal, bracketed_paste, Bool).
+
+%!  set_prompt_marks(+Terminal, +Bool) is det.
+%
+%   Turn the OSC 133 prompt marks on or off in the client, and wait
+%   until it has confirmed the new state.
+
+set_prompt_marks(Terminal, Bool) :-
+    set_el_option(Terminal, prompt_marks, Bool).
+
+%!  set_el_option(+Terminal, +Name, +Bool) is det.
+%
+%   Set a boolean el_set/2 option in the client and wait until el_get/2
+%   reports it back.  The reply is printed rather than trusted: a
+%   client that did not take the option would otherwise leave the test
+%   asserting the behaviour of the state it meant to leave behind.
+
+set_el_option(Terminal, Name, Bool) :-
     reset_input(Terminal),
     format(atom(Goal),
-           'el_set(user_input, bracketed_paste(~w)), \c
-            el_get(user_input, bracketed_paste(B)), format("bp=~~w~~n", [B]).',
-           [Bool]),
+           'el_set(user_input, ~w(~w)), \c
+            el_get(user_input, ~w(B)), format("~w=~~w~~n", [B]).',
+           [Name, Bool, Name, Name]),
     type(Terminal, Goal),
     key(Terminal, enter),
-    format(atom(Marker), 'bp=~w', [Bool]),
+    format(atom(Marker), '~w=~w', [Name, Bool]),
     assertion(wait_until(marker_on_screen(Terminal, Marker), 15)),
     assertion(wait_for_prompt(Terminal)).
 
@@ -2941,6 +2959,24 @@ test(click_moves_the_caret_without_bracketed_paste,
     cursor(T, C2, R2),
     assertion(R2 =:= R),
     assertion(C2 =:= C1+8).
+
+test(no_signal_no_caret_move,
+     [ setup(test_begin(T)),
+       cleanup(( set_prompt_marks(T, true),
+                 set_bracketed_paste(T, true)
+               ))
+     ]) :-
+    %  el_set/2 takes the marks away again, for a terminal that would
+    %  print them rather than read them.  With bracketed paste gone as
+    %  well the client says nothing at all about the line it is
+    %  editing, and the terminal leaves the caret alone.
+    set_prompt_marks(T, false),
+    set_bracketed_paste(T, false),
+    type(T, 'hello world, this is the input line'),
+    drive(0.3),
+    cursor(T, C, R),
+    click(T, 12, R),
+    assert_cursor(T, C, R).
 
 test(click_moves_the_caret_without_a_prompt, [setup(test_begin(T))]) :-
     %  Prolog writes no prompt for a read that starts where the output
