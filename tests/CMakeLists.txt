@@ -7,13 +7,15 @@ test_libs(number_conversion)
 test_libs(object_reference)
 test_libs(terminal_osc)
 test_libs(terminal_bce)
+test_libs(terminal_palette)
 
 set(XPCE_EXTRA_TESTS xpce:colour
                      xpce:no_display
                      xpce:number_conversion
                      xpce:object_reference
                      xpce:terminal_osc
-                     xpce:terminal_bce)
+                     xpce:terminal_bce
+                     xpce:terminal_palette)
 
 # The terminal suite drives a terminal and reads the screen back, so it
 # spends its time waiting for the terminal rather than computing: about a

@@ -4438,12 +4438,36 @@ palette_init(RlcData b)
   /* Slots 0..15 are sentinel placeholders; nothing to write yet. */
 }
 
+/* Own and let go of a Colour of the palette.
+ *
+ * ->lock_object would do, were F_LOCKED a count.  It is a flag, and
+ * ws_pixel_to_colour() interns: every terminal that resolves an RGBA
+ * value gets the same Colour, so the first of them to let go took the
+ * protection of all the others with it.  Deleting a second Epilog
+ * window left the first painting with a freed Colour.  A reference
+ * counts.  Taking the Colour off the answer stack is what
+ * ->lock_object did on our behalf; without it the Colour is freed when
+ * the goal that painted it ends.
+ */
+
+static void
+palette_own_colour(Colour c)
+{ deleteAnswerObject(c);
+  addRefObj(c);
+}
+
+static void
+palette_disown_colour(Colour c)
+{ delRefObj(c);
+  freeableObj(c);
+}
+
 static void
 palette_destroy(RlcData b)
 { if ( b->palette_obj )
   { for(uint32_t i = PAL_ANSI_RESERVED; i < b->palette_size; i++)
     { if ( b->palette_obj[i] )
-	lockObject(b->palette_obj[i], OFF);
+	palette_disown_colour(b->palette_obj[i]);
     }
     rlc_free(b->palette_obj);
     b->palette_obj = NULL;
@@ -4565,8 +4589,9 @@ palette_for_xterm256(RlcData b, int n)
  * NULL — callers fall back to the terminal/style default.  Slots 0..15
  * read from ti->ansi_colours so theme changes take effect immediately;
  * higher slots come from the interned COLORRGBA palette, with each
- * Colour created lazily and locked so it survives xpce GC between
- * paints (RevColourTable holds Colours with refer=none).
+ * Colour created lazily and referenced so it survives between paints
+ * (RevColourTable holds Colours with refer=none).  See
+ * palette_own_colour().
  */
 static Colour
 palette_colour(RlcData b, unsigned idx)
@@ -4583,7 +4608,7 @@ palette_colour(RlcData b, unsigned idx)
   if ( !b->palette_obj[idx] )
   { Colour c = ws_pixel_to_colour(b->palette[idx]);
     if ( c )
-      lockObject(c, ON);
+      palette_own_colour(c);
     b->palette_obj[idx] = c;
   }
   return b->palette_obj[idx];
