@@ -61,7 +61,13 @@ initialiseFrame(FrameObj fr, Name label, Name kind,
 { if ( isDefault(kind) )
     kind = NAME_toplevel;
   if ( isDefault(display) )
-    display = CurrentDisplay(NIL);
+  { /* There is none if the window system could not be initialised.  Say
+     * so here: a frame without a display crashes on the first thing that
+     * looks at its <-display, which is ->create.
+     */
+    if ( !(display = CurrentDisplay(NIL)) )
+      return errorPce(fr, NAME_noDisplay);
+  }
   if ( isDefault(label) )
     label = CtoName("Untitled");
   if ( isDefault(app) )

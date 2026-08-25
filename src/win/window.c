@@ -66,7 +66,12 @@ initialiseWindow(PceWindow sw, Name label, Size size, DisplayObj display)
   sw->ws_ref = NULL;
 
   if ( notDefault(label) || notDefault(display) )
-    frameWindow(sw, newObject(ClassFrame, label, DEFAULT, display, EAV));
+  { FrameObj fr = newObject(ClassFrame, label, DEFAULT, display, EAV);
+
+    if ( !fr )				/* no display; ClassFrame said so */
+      fail;
+    frameWindow(sw, fr);
+  }
 
   succeed;
 }
@@ -236,7 +241,7 @@ createWindow(PceWindow sw, PceWindow parent)
       succeed;
     } else
     { if ( isNil(sw->frame) )
-	frameWindow(sw, DEFAULT);
+	TRY(frameWindow(sw, DEFAULT));	/* fails if there is no display */
       if ( !createdFrame(sw->frame) )
 	return send(sw->frame, NAME_create, EAV);
     }
@@ -267,6 +272,9 @@ createWindow(PceWindow sw, PceWindow parent)
       d = sw->frame->display;
     else
       d = CurrentDisplay(sw);
+
+    if ( !d )				/* the window system has none */
+      return errorPce(sw, NAME_noDisplay);
 
     if ( isDefault(sw->colour) )
       assign(sw, colour, d->foreground);
@@ -1848,8 +1856,9 @@ frameWindow(PceWindow sw, FrameObj frame)
 
   if ( isDefault(frame) )
   { if ( isNil(sw->frame) )
-      frame = newObject(ClassFrame, EAV);
-    else
+    { if ( !(frame = newObject(ClassFrame, EAV)) )
+	fail;				/* no display; ClassFrame said so */
+    } else
       succeed;
   }
 

@@ -2,12 +2,14 @@
 # Additional xpce tests (plunit-based, standalone modules)
 
 test_libs(colour)
+test_libs(no_display)
 test_libs(number_conversion)
 test_libs(object_reference)
 test_libs(terminal_osc)
 test_libs(terminal_bce)
 
 set(XPCE_EXTRA_TESTS xpce:colour
+                     xpce:no_display
                      xpce:number_conversion
                      xpce:object_reference
                      xpce:terminal_osc

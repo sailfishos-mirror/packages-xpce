@@ -362,10 +362,18 @@ d_window(PceWindow sw, int x, int y, int w, int h, int clear, int limit)
  */
 status
 d_image(Image i, int x, int y, int w, int h)
-{ DisplayObj d =  CurrentDisplay(NIL);
+{ DisplayObj d = CurrentDisplay(NIL);
+  Any colour, background;
+
   ws_open_image(i);
-  Any colour = d->foreground;
-  Any background = d->background;
+  if ( d )
+  { colour     = d->foreground;
+    background = d->background;
+  } else	/* no display: an image is offscreen, so draw as d_pdf() does */
+  { d          = NIL;
+    colour     = BLACK_COLOUR;
+    background = WHITE_COLOUR;
+  }
 
   push_context();
   context.open = 1;
@@ -2034,8 +2042,29 @@ ws_font_context(void)
   }
 
   DisplayObj d = CurrentDisplay(NIL);
-  WsDisplay wsd = d->ws_ref;
-  return wsd->hidden_cairo;
+  if ( d )
+  { WsDisplay wsd = d->ws_ref;
+
+    if ( wsd && wsd->hidden_cairo )
+      return wsd->hidden_cairo;
+  }
+
+  /* No display, or none opened: measure on a scratch surface of our own.
+   * Text metrics come from Pango rather than from the window system, so
+   * they are as good as the ones a display would have given, and drawing
+   * on an image works headless (see d_image()).
+   */
+  static cairo_t *no_display_cairo;
+
+  if ( !no_display_cairo )
+  { cairo_surface_t *surf =
+      cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 64, 64);
+
+    no_display_cairo = cairo_create(surf);
+    cairo_surface_destroy(surf);	/* the context holds a reference */
+  }
+
+  return no_display_cairo;
 }
 
 static void
