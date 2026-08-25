@@ -1322,6 +1322,18 @@ at_prompt(Terminal) :-
         sub_atom(Line, _, _, 0, '?-')
     ).
 
+%!  waiting_for(+Terminal, +Prompt) is semidet.
+%
+%   True when the caret sits at the end of a row ending in Prompt.
+%   Used to wait for a goal that prompts for itself, where there is no
+%   toplevel prompt to wait for.
+
+waiting_for(Terminal, Prompt) :-
+    cursor(Terminal, _, Row),
+    row_text(Terminal, Row, Line),
+    atom(Line),
+    sub_atom(Line, _, _, 0, Prompt).
+
 %!  prompt_col(+Terminal, -Col) is det.
 %
 %   The column immediately after the prompt on the current input row
@@ -2903,6 +2915,25 @@ test(click_outside_the_input_line, [setup(test_begin(T))]) :-
     assertion(Above >= 0),
     click(T, 5, Above),
     assert_cursor(T, C, R).
+
+test(click_while_reading_one_char, [setup(test_begin(T))]) :-
+    %  A client reading a single character is not editing a line: it
+    %  would take the ESC of the first cursor key we send as its
+    %  answer.  libedit turns bracketed paste off around such a read
+    %  and the terminal takes that as its cue to leave the caret alone,
+    %  so the click sends nothing at all and the character the user
+    %  types next is still the one the client gets.
+    type(T, 'format("pick: "), get_single_char(C), format("got ~w~n", [C]).'),
+    key(T, enter),
+    assertion(wait_until(waiting_for(T, 'pick: '), 15)),
+    cursor(T, Col, Row),
+    click(T, 1, Row),
+    drive(0.3),
+    assert_cursor(T, Col, Row),
+    assertion(waiting_for(T, 'pick: ')),
+    type(T, x),
+    assertion(wait_until(marker_on_screen(T, 'got 120'), 15)),
+    assertion(wait_for_prompt(T)).
 
 test(drag_selects_and_leaves_the_caret, [setup(test_begin(T))]) :-
     type(T, 'hello world, this is the input line'),

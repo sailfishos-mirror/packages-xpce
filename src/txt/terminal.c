@@ -3241,6 +3241,15 @@ rlc_translate_mouse(RlcData b, int x, int y, int *line, int *chr)
  * many.  Only inside the logical line the caret is on -- the line
  * being edited -- so a click anywhere else still just starts a
  * selection.
+ *
+ * And only while a line editor is there to understand the request.
+ * The client that asks for a single character -- the Prolog tracer at
+ * its `? ' prompt, get_single_char/1, with_tty_raw/1 -- reads the ESC
+ * of the first cursor key as the answer and reports it as an unknown
+ * command.  The tty tells us nothing: it is in the same non-canonical
+ * mode either way.  Bracketed paste does: a line editor turns DEC
+ * private mode 2004 on while it owns the input and off while it does
+ * not, so it is on precisely when there is a caret to move.
  */
 
 #define MAX_CLICK_MOVE 4096		/* don't flood the client */
@@ -3285,6 +3294,9 @@ static bool
 rlc_caret_to_click(RlcData b, int x, int y)
 { int line, chr, n, i;
   const char *seq;
+
+  if ( !b->bracketed_paste_mode )	/* nobody is editing a line */
+    return false;
 
   rlc_translate_mouse(b, x, y, &line, &chr);
   if ( !rlc_between(b, b->first, b->last, line) ||
