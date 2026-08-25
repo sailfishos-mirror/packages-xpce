@@ -2729,7 +2729,7 @@ static senddecl send_terminal_image[] =
      NAME_event, "Handle a general event"),
   SM(NAME_typed, 1, "event", typedTerminalImage,
      NAME_event, "Process a keystroke"),
-  SM(NAME_insertSelf, 1, "0..", insertSelfTerminalImage,
+  SM(NAME_insertSelf, 1, "char", insertSelfTerminalImage,
      NAME_event, "Process a keystroke"),
   SM(NAME_copy, 1, "which=[{primary,clipboard}]", copyTerminalImage,
      NAME_selection, "Copy selected text to clipboard or primary selection"),
