@@ -8562,7 +8562,13 @@ rlc_resize_pty(RlcData b, int cols, int rows)
       }
       close(fd);
 #ifdef SIGWINCH
-      if ( b->pty.has_client_thread )
+      /* EPILOG_NO_SIGWINCH keeps the signal in: that is the path a
+       * Windows console is always on, and the one a lost signal leaves
+       * us on, where libedit has to notice the new size by polling it
+       * (see terminal_size_changed() in packages/libedit/libedit4pl.c).
+       * The terminal test suite runs itself over it that way.
+       */
+      if ( b->pty.has_client_thread && !getenv("EPILOG_NO_SIGWINCH") )
 	pthread_kill(b->pty.client_thread, SIGWINCH);
 #else
 #warning "Could not find SIGWINCH.  Please investigate"

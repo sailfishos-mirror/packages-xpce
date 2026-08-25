@@ -70,6 +70,24 @@ endfunction()
 
 add_terminal_tests("xpce:terminal" "epilog")
 
+# And once with the resize signal held back.  A window resize raises
+# SIGWINCH on the client thread, but that is not what libedit may rely
+# on: a Windows console raises nothing at all, and a signal can be lost
+# -- one that arrives while libedit is repainting for the previous one
+# used to be cleared along with it.  What is left is the size on the pty,
+# which read_char() polls before it hands a key to libedit.  Without the
+# poll the three resize tests that press a key fail, which is what this
+# used to do a run in five, from a lost signal, with nothing to say why.
+
+add_test(NAME "xpce:terminal_no_sigwinch.terminal_resize"
+         COMMAND ${PROG_SWIPL} -f none --no-packs
+                 -s ${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.pl
+                 -g "test_terminal(epilog,terminal_resize)"
+                 -t halt)
+set_tests_properties("xpce:terminal_no_sigwinch.terminal_resize"
+                     PROPERTIES ENVIRONMENT
+                     "${XPCE_TEST_ENV};EPILOG_NO_SIGWINCH=1")
+
 # And against a child process on the terminal's pty, which is the only
 # way to reach libedit's ordinary termcap paths: the epilog terminal
 # always runs it with the EPILOG flag.  The child is placed on the
