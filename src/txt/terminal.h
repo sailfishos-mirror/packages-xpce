@@ -362,6 +362,10 @@ typedef struct rlc_data
   bool		caret_is_shown;		/* is caret in the window? */
   bool		hide_caret;		/* DEC Private Mode 25 */
   bool		bracketed_paste_mode;	/* DEC Private Mode 2004 */
+  bool		prompt_marks;		/* client marks its prompts */
+  bool		input_active;		/* OSC 133: between B and C */
+  int		input_line;		/* OSC 133 B: where the input */
+  int		input_char;		/* the user edits starts */
   bool		focus_inout_events;	/* Dec Private Mode 1004 */
   bool		alt_scroll;		/* DEC Private Mode 1007 */
   int		mouse_tracking;		/* DEC Private Mode 9/1000/1002/1003 */

@@ -1153,6 +1153,25 @@ reset_input(Terminal) :-
     key(Terminal, ctrl_l),
     wait_for_prompt(Terminal).
 
+%!  set_bracketed_paste(+Terminal, +Bool) is det.
+%
+%   Turn libedit's bracketed paste mode on or off in the client, and
+%   wait until it has confirmed the new state.  Used to take away the
+%   fallback signal that a line editor owns the input, which is the
+%   situation of a client editing in vi mode.
+
+set_bracketed_paste(Terminal, Bool) :-
+    reset_input(Terminal),
+    format(atom(Goal),
+           'el_set(user_input, bracketed_paste(~w)), \c
+            el_get(user_input, bracketed_paste(B)), format("bp=~~w~~n", [B]).',
+           [Bool]),
+    type(Terminal, Goal),
+    key(Terminal, enter),
+    format(atom(Marker), 'bp=~w', [Bool]),
+    assertion(wait_until(marker_on_screen(Terminal, Marker), 15)),
+    assertion(wait_for_prompt(Terminal)).
+
 %!  rows_above(+Terminal, +N) is semidet.
 %
 %   Make sure the prompt has at least N rows above it by running
@@ -2900,6 +2919,63 @@ test(click_moves_the_caret, [setup(test_begin(T))]) :-
     ),
     click(T, 20, R),                    % clicking again changes nothing
     assert_cursor(T, C2, R).
+
+test(click_moves_the_caret_without_bracketed_paste,
+     [ setup(test_begin(T)),
+       cleanup(set_bracketed_paste(T, true))
+     ]) :-
+    %  Bracketed paste is only the fallback evidence that a line editor
+    %  owns the input, and libedit turns it off in vi mode, where the
+    %  ESC[200~ start marker cannot be dispatched as a binding.  The
+    %  OSC 133 prompt marks say the same thing outright, so the caret
+    %  keeps following the mouse without it.
+    set_bracketed_paste(T, false),
+    type(T, 'hello world, this is the input line'),
+    drive(0.3),
+    cursor(T, End, R),
+    click(T, 12, R),
+    cursor(T, C1, R1),
+    assertion(R1 =:= R),
+    assertion(C1 < End),
+    click(T, 20, R),                    % eight cells further right
+    cursor(T, C2, R2),
+    assertion(R2 =:= R),
+    assertion(C2 =:= C1+8).
+
+test(click_moves_the_caret_without_a_prompt, [setup(test_begin(T))]) :-
+    %  Prolog writes no prompt for a read that starts where the output
+    %  left the caret, so there is no prompt to mark; the input is
+    %  still marked, and still edited.
+    type(T, 'format("name: "), read_line_to_string(user_input, S), \c
+             format("[~w]~n", [S]).'),
+    key(T, enter),
+    assertion(wait_until(waiting_for(T, 'name: '), 15)),
+    type(T, 'abcdefgh'),
+    drive(0.3),
+    cursor(T, End, R),
+    Back is End-4,
+    click(T, Back, R),
+    cursor(T, C, R1),
+    assertion(R1 =:= R),
+    assertion(C =:= Back),
+    type(T, 'XY'),
+    key(T, enter),
+    assertion(wait_until(marker_on_screen(T, '[abcdXYefgh]'), 15)),
+    assertion(wait_for_prompt(T)).
+
+test(click_in_the_prompt_goes_to_the_input, [setup(test_begin(T))]) :-
+    %  A click in front of the input is a click in the prompt, and the
+    %  caret goes to the start of the input.  OSC 133 B says where that
+    %  is, so the terminal stops there rather than asking the client to
+    %  walk into its own prompt.  A line editor clamps such a walk
+    %  anyway, which is why this asserts where the caret ends up rather
+    %  than how many keys it took.
+    prompt_col(T, P),
+    type(T, 'hello'),
+    drive(0.3),
+    cursor(T, _, R),
+    click(T, 0, R),
+    assert_cursor(T, P, R).
 
 test(click_outside_the_input_line, [setup(test_begin(T))]) :-
     %  Only the line being edited follows the mouse; a click anywhere

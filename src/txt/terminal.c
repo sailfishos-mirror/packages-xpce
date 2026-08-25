@@ -3247,9 +3247,17 @@ rlc_translate_mouse(RlcData b, int x, int y, int *line, int *chr)
  * its `? ' prompt, get_single_char/1, with_tty_raw/1 -- reads the ESC
  * of the first cursor key as the answer and reports it as an unknown
  * command.  The tty tells us nothing: it is in the same non-canonical
- * mode either way.  Bracketed paste does: a line editor turns DEC
- * private mode 2004 on while it owns the input and off while it does
- * not, so it is on precisely when there is a caret to move.
+ * mode either way.  Two things a client says do.
+ *
+ * The OSC 133 marks say it outright: between `B' and `C' there is a
+ * line being edited, and `B' landed where it starts, so a click in
+ * front of it can be taken to mean the start of the input rather than
+ * a walk into the prompt.
+ *
+ * Bracketed paste is what is left for a client that does not mark its
+ * prompts, which is most of them: a line editor turns DEC private mode
+ * 2004 on while it owns the input and off while a command runs, so it
+ * is on when there is a caret to move.  See rlc_editing_line().
  */
 
 #define MAX_CLICK_MOVE 4096		/* don't flood the client */
@@ -3290,18 +3298,61 @@ rlc_cluster_distance(RlcData b, int l1, int c1, int l2, int c2)
   }
 }
 
+/* Is a line editor there to understand a request to move its caret?
+ *
+ * A client that marks its prompts is taken at its word.  One that does
+ * not leaves us with bracketed paste, which a line editor turns on
+ * while it owns the input and off while a command runs.  Which of the
+ * two is asked is decided per prompt: turning bracketed paste on
+ * without marking what follows is how a shell that never heard of OSC
+ * 133 takes this window over.
+ */
+
+static bool
+rlc_editing_line(RlcData b)
+{ return b->prompt_marks ? b->input_active : b->bracketed_paste_mode;
+}
+
+
+/* Where the line being edited starts, if the client marked it and the
+ * mark is still on the line the caret is on.  Scrolling the mark out of
+ * the buffer or off its line leaves it behind, so it is checked rather
+ * than trusted.
+ */
+
+static bool
+rlc_input_start(RlcData b, int line, int *sl, int *sc)
+{ if ( b->input_active &&
+       rlc_between(b, b->first, b->last, b->input_line) &&
+       rlc_logical_start(b, b->input_line) == rlc_logical_start(b, line) )
+  { *sl = b->input_line;
+    *sc = b->input_char;
+    return true;
+  }
+
+  return false;
+}
+
+
 static bool
 rlc_caret_to_click(RlcData b, int x, int y)
 { int line, chr, n, i;
+  int sl, sc;
   const char *seq;
 
-  if ( !b->bracketed_paste_mode )	/* nobody is editing a line */
+  if ( !rlc_editing_line(b) )		/* nobody is editing a line */
     return false;
 
   rlc_translate_mouse(b, x, y, &line, &chr);
   if ( !rlc_between(b, b->first, b->last, line) ||
        rlc_logical_start(b, line) != rlc_logical_start(b, b->caret_y) )
     return false;
+
+  if ( rlc_input_start(b, line, &sl, &sc) &&
+       rlc_sel_lt(b, line, chr, sl, sc) )
+  { line = sl;				/* a click in the prompt means */
+    chr  = sc;				/* the start of the input */
+  }
 
   if ( rlc_sel_lt(b, line, chr, b->caret_y, b->caret_x) )
   { n = rlc_cluster_distance(b, line, chr, b->caret_y, b->caret_x);
@@ -5899,6 +5950,8 @@ rlc_reset(RlcData b)
   rlc_soft_reset(b);
   rlc_init_tabs(b);
   b->bracketed_paste_mode = false;
+  b->prompt_marks         = false;
+  b->input_active         = false;
   b->focus_inout_events   = false;
   b->alt_scroll           = true;
   b->mouse_tracking       = 0;
@@ -7171,6 +7224,8 @@ rlc_set_dec_mode(RlcData b, int mode)
       break;
     case 2004:
       b->bracketed_paste_mode = true;
+      b->prompt_marks         = false;	/* until this prompt marks itself */
+      b->input_active         = false;
       break;
     default:
       DEBUG(NAME_term, Cprintf("Set unknown DEC private mode %d\n", mode));
@@ -7454,6 +7509,37 @@ report_directory(RlcData b, Name dir, Name host)
     send(ti, NAME_workingDirectory, dir, host, EAV);
 }
 
+/** OSC 133, the "semantic prompt" marks of FinalTerm that iTerm2,
+ * kitty, WezTerm and VS Code speak: `A' starts a prompt, `B' ends the
+ * prompt and starts the line the user edits, `C' ends that line and
+ * starts the output of what was entered, and `D' ends the output.
+ * Everything after the mark letter is a parameter list we have no use
+ * for.
+ *
+ * We keep the one thing the mouse needs: whether the client is reading
+ * a line right now and where that line starts.  See
+ * rlc_caret_to_click().
+ */
+
+static void
+osc133_mark(RlcData b, const uchar_t *param)
+{ b->prompt_marks = true;
+
+  switch(param[0])
+  { case 'B':				/* the input starts here */
+      b->input_active = true;
+      b->input_line   = b->caret_y;
+      b->input_char   = b->caret_x;
+      break;
+    case 'A':				/* a prompt, so not yet */
+    case 'C':				/* the line was entered */
+    case 'D':				/* and its output is over */
+      b->input_active = false;
+      break;
+  }
+}
+
+
 static void
 osc_command(RlcData b, int param, const uchar_t *link)
 { switch(param)
@@ -7526,6 +7612,9 @@ osc_command(RlcData b, int param, const uchar_t *link)
       }
       break;
     }
+    case 133:			/* semantic prompt marks */
+      osc133_mark(b, link);
+      break;
     default:
       DEBUG(NAME_term, Cprintf("Unknown OSC command: %d\n", param));
   }
