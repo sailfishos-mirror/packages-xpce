@@ -2849,61 +2849,6 @@ test(sgr_selects_a_font, [setup(test_begin(T))]) :-
     assertion(BoldItalic \== Bold),
     assertion(BoldItalic \== Italic).
 
-%!  tail_colours(+T, -Colours) is det.
-%
-%   Colours of a column of pixels halfway across the window, top down.
-%   That column crosses the tail of the top row, which is where a
-%   background colour erase (bce) shows and nothing else does: the row
-%   holds a few characters and the rest of it is painted with whatever
-%   `\e[K' left behind.  A column rather than term_screenshot/2, which
-%   reads a megapixel one `get' at a time: this only has to tell one
-%   flat colour from another, and it need not know which row of pixels
-%   the top row of cells starts at.
-
-tail_colours(terminal(_, xpce(Frame, _)), Colours) :-
-    get(Frame, image, Img),
-    get(Img, size, size(W, H)),
-    X is W//2,
-    findall(rgb(R,G,B),
-            ( between(0, 15, I),
-              Y is I*4,
-              Y < H,
-              get(Img, pixel(X, Y), Colour),
-              get(Colour, red, R),
-              get(Colour, green, G),
-              get(Colour, blue, B)
-            ),
-            Colours).
-
-test(background_erase_survives_the_alternate_screen,
-     [ setup(current_test_terminal(T)),
-       cleanup(out(T, '\e[?25h'))
-     ]) :-
-    %  `\e[K' under a background paints the tail of the row up to the
-    %  right margin (bce).  That erase belongs to the line rather than
-    %  to its text, so saving the screen for the alternate one and
-    %  putting it back has to carry it along: help/1 leaves through the
-    %  alternate screen and the input lines came back with a background
-    %  behind their text only.  The caret is off throughout: it blinks,
-    %  and the sampled pixel must hold still.
-    out(T, '\e[?25l'),
-    %  The trailing line is there because the last line written lags a
-    %  moment.
-    out(T, '\e[2J\e[H\e[44mtext\e[0m\r\n.\r\n'),
-    drive(0.3),
-    tail_colours(T, Plain),
-    out(T, '\e[2J\e[H\e[44mtext\e[K\e[0m\r\n.\r\n'),
-    drive(0.3),
-    tail_colours(T, Erased),
-    %  Without this the rest says nothing: it is what shows that the
-    %  sample tells a painted tail from a plain one at all.
-    assertion(Plain \== Erased),
-    alt_screen(T, 'ALT'),
-    normal_screen(T),
-    drive(0.3),
-    tail_colours(T, Restored),
-    assertion(Restored == Erased).
-
 :- end_tests(terminal_attributes).
 
 

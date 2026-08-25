@@ -61,6 +61,7 @@ terminal(TI) :-
     new(TI, terminal_image(1000, 500)),
     new(W, window('test_terminal_bce')),
     send(W, display, TI),
+    send(W, size, size(1000, 500)),	% so the whole terminal is painted
     send(W, open),
     send(W, wait).
 
@@ -93,6 +94,50 @@ selected(TI, Text) :-
 
 bg(Seq) :-                                      % a soft dark background
     Seq = '\e[48;5;235m'.
+
+%!  settle(+Terminal) is det.
+%
+%   Let the window paint what was inserted.  Only the tests that read
+%   pixels need this: the text of a row is there the moment it is
+%   written, but what is on the screen is painted from an event.
+
+settle(_TI) :-
+    get_time(Now),
+    Deadline is Now+0.3,
+    settle_until(Deadline).
+
+settle_until(Deadline) :-
+    pce_principal:pce_dispatch(-1, 0.05),
+    get_time(Now),
+    (   Now >= Deadline
+    ->  true
+    ;   settle_until(Deadline)
+    ).
+
+%!  tail_colours(+Terminal, -Colours) is det.
+%
+%   Colours of a column of pixels halfway across the window, top down,
+%   as `rgb(R,G,B)' terms.  That column crosses the tail of the top row,
+%   which is the only place the background colour erase shows: the cells
+%   are not in the line (see above), so nothing but the screen itself
+%   can say whether they were painted.
+
+tail_colours(TI, Colours) :-
+    get(TI, window, W),
+    get(W, frame, F),
+    get(F, image, Img),
+    get(Img, size, size(Width, Height)),
+    X is Width//2,
+    findall(rgb(R,G,B),
+            ( between(0, 15, I),
+              Y is I*4,
+              Y < Height,
+              get(Img, pixel(X, Y), Colour),
+              get(Colour, red, R),
+              get(Colour, green, G),
+              get(Colour, blue, B)
+            ),
+            Colours).
 
                 /*******************************
                 *             TESTS            *
@@ -158,5 +203,31 @@ test(next_line_unaffected,
     row(TI, 1, Row1),
     assertion(Row0 == 'first'),
     assertion(Row1 == 'second').
+
+% The tail painted by an erase belongs to the line rather than to its
+% text, so saving the screen for the alternate screen and putting it back
+% has to carry it along.  help/1 leaves through the alternate screen, and
+% the input lines came back with a background behind their text only.
+
+test(background_survives_the_alternate_screen,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    bg(Bg),
+    atomic_list_concat([Bg, 'text', '\e[0m\r\n.\r\n'], Plain),
+    atomic_list_concat([Bg, 'text', '\e[K\e[0m\r\n.\r\n'], Erased),
+    send(TI, insert, Plain),
+    settle(TI),
+    tail_colours(TI, NotPainted),
+    send(TI, insert, '\e[2J\e[H'),
+    send(TI, insert, Erased),
+    settle(TI),
+    tail_colours(TI, Painted),
+    %  Without this the rest says nothing: it is what shows that the
+    %  sample tells a painted tail from a plain one at all.
+    assertion(NotPainted \== Painted),
+    send(TI, insert, '\e[?1049h\e[HALT'),
+    send(TI, insert, '\e[?1049l'),
+    settle(TI),
+    tail_colours(TI, Restored),
+    assertion(Restored == Painted).
 
 :- end_tests(terminal_bce).
