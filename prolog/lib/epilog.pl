@@ -1415,7 +1415,7 @@ report(T, Type:name, Fmt:[char_array], Args:any ...) :->
             %  away again, so they go back after it.
             (   search_options(TI)
             ->  send(Bar, search_options,
-                     TI?exact_case, TI?search_word)
+                     TI?exact_case, TI?match_word)
             ;   true
             )
         )

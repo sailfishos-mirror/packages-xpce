@@ -97,6 +97,14 @@ keystrokes and hovered hyperlinks.
     are highlighted, and `@nil` when it is not.  See `->selection`; it
     is also what `->isearch_selection_forward` searches for.
 
+- terminal_image<-match_word: bool
+    Whether matching asks for whole words *now*: `<->search_word`, or a
+    selection made by double clicking a word.  A search takes this from
+    the selection it was seeded with; one started with `\C-\S-f` has no
+    selection to take it from.  This, not `<->search_word`, is what the
+    window should show as the state of a `Word` box, so that the box says
+    what the tally beside it was counted with.
+
 - terminal_image<-search_direction: {forward,backward}
     Direction the incremental search is going.
 
@@ -104,13 +112,17 @@ keystrokes and hovered hyperlinks.
     Whether the incremental search is case sensitive.
 
 - terminal_image<->search_word: bool
-    Whether the incremental search matches whole words only, in the
-    sense of `<-syntax`.
+    Whether matching asks for whole words only, in the sense of
+    `<-syntax`.
 
     Both decide what counts as a match for a selection as well as for a
     search.  Both outlive the search that used them, and setting either
     looks again at once, so the hit or the selection, the tally and what
     is painted all follow.
+
+    A selection can ask for whole words on its own account -- see
+    `<-match_word` -- so turning `->search_word` off also takes that back:
+    the setting means what it says.
 
 
 ## Send methods {#class-terminal_image-send}
@@ -197,12 +209,19 @@ keystrokes and hovered hyperlinks.
     many there are, as `Selection: X (2/5)`, counted over the whole
     buffer while what is painted is the page.
 
+    Double clicking picks a word, and that says to look for the word
+    rather than for the letters it happens to be made of: matching is
+    whole-word for such a selection whatever `<->search_word` stands at
+    (see `<-match_word`), so a double click on `Bar` passes over `Barn`
+    while dragging over the same three characters does not.  It also
+    makes a one-character word worth looking for.
+
     Not every selection is looked for, and `<-selection_string` says
     which are.  A selection that occurs nowhere else says nothing and is
     painted as a plain selection.  Neither is one that is blank, that
     runs over a line break, that is longer than 100 characters, or that
-    is a single character while `<->search_word` is `@off` -- each of
-    those would light up most of the screen.  Nor is anything looked for
+    is a single character while `<-match_word` is `@off` -- each of those
+    would light up most of the screen.  Nor is anything looked for
     on the alternate screen, whose lines are not in the buffer.
 
     What is looked for is the text under the selection as it is now: a
@@ -255,7 +274,7 @@ keystrokes and hovered hyperlinks.
     | `Backspace`        | Drop a character and search again |
     | `^W`               | Take the word behind the hit into the search string, along with whatever separates the two, so that pressing it again walks on word by word.  Not across a line: a search string with a line break in it matches almost nothing |
     | `M-c`              | Turn `<->exact_case` on or off |
-    | `M-w`              | Turn `<->search_word` on or off |
+    | `M-w`              | Turn whole-word matching on or off, as `<-match_word` reports it |
     | `^G`               | Give back the view and the selection the search started from |
     | `Escape`, `Return` | Leave the search with the hit selected |
     | Any other key      | Leaves the search, and then means what it usually means |

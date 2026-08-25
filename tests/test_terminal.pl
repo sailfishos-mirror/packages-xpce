@@ -316,6 +316,7 @@ term_key_press(T, Key) :-
 button_control(0x1).			% BUTTON_control, src/h/graphics.h
 button_shift(0x2).			% BUTTON_shift, idem
 button_meta(0x4).			% BUTTON_meta, idem
+click_double(0x020000).			% CLICK_TYPE_double, idem
 
 %!  term_foreground_process(+T, -PID) is semidet.
 %
@@ -443,6 +444,37 @@ term_drag(terminal(_, xpce(_, TI)), Col1, Row1, Col2, Row2, Buttons) :-
 %   A terminal that does not report the mouse has nothing to do with a
 %   bare motion and says so by failing the event, which is not the
 %   helper's business.
+
+%!  term_double_click(+T, +Col, +Row) is det.
+%!  term_click_elsewhere(+T) is det.
+%
+%   A click the display reports as the second of two, and the click
+%   before it that makes it the second.
+%
+%   Which of the three kinds a click is, is a field of the button mask,
+%   but passing CLICK_TYPE_double does not ask for a double click: it
+%   asks initialiseEvent() for the kind *after* the one before it, which
+%   from a double click is a triple.  Nor does time tell two clicks
+%   apart here -- the events a test synthesises all carry time 0, so
+%   every click is inside the multi-click time of the one before it and
+%   only the distance between them counts.
+%
+%   Hence the click somewhere else first: far enough from anything a
+%   test clicks on to be a single click whatever came before it, which
+%   makes the one after it the second of two.  A test that clicks or
+%   drags where a double click has just been needs one too, or its click
+%   is taken for the third.  Never two in a row: the second of those is
+%   a double click on the bottom row.
+
+term_double_click(T, Col, Row) :-
+    term_click_elsewhere(T),
+    click_double(Double),
+    term_click(T, Col, Row, Double).
+
+term_click_elsewhere(T) :-
+    term_rows(T, Rows),
+    Last is Rows-1,
+    term_click(T, 0, Last, 0).
 
 term_move(terminal(_, xpce(_, TI)), Col, Row) :-
     cell_pixel(TI, Col, Row, X, Y),
@@ -4730,8 +4762,9 @@ select_match(T, Text, Times) :-
 %   that used them, as they outlive a search.
 
 match_options(T) :-
-    term_exact_case(T, @off),
-    term_search_word(T, @off).
+    term_select(T, @default, @default),     % a double-clicked word asks
+    term_exact_case(T, @off),               % for word mode; it goes with
+    term_search_word(T, @off).              % the selection that asked
 
 test(selection_highlights_the_other_matches,
      [ setup(test_begin(T))
@@ -4967,6 +5000,95 @@ test(searching_on_needs_a_selection_to_look_for,
     assertion(\+ get(TI, selection_string, @nil)),
     assertion(send(TI, isearch_selection_forward)),
     isearch_key(T, 0'G).
+
+test(double_click_looks_for_a_whole_word,
+     [ condition(needs([mouse])),
+       setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    %  Picking a word says to look for that word, not for the letters it
+    %  happens to be made of, so `Barn' is not one of them.
+    buffer(T, 'Bar Barn Bar'),
+    term_double_click(T, 0, 0),
+    term_selection(T, Selected),
+    assertion(Selected == 'Bar'),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == 'SSS......ooo'),
+    term_report(T, Report),
+    assertion(Report == 'Selection: Bar (1/2)').
+
+test(dragging_out_the_same_word_does_not,
+     [ condition(needs([mouse])),
+       setup(test_begin(T))
+     ]) :-
+    %  Dragging says nothing about words, so the same text picked that
+    %  way matches wherever it occurs.
+    buffer(T, 'Bar Barn Bar'),
+    term_click_elsewhere(T),                % a double click has just been
+    term_drag(T, 0, 0, 3, 0),
+    term_selection(T, Selected),
+    assertion(Selected == 'Bar'),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == 'SSS.ooo..ooo'),
+    term_report(T, Report),
+    assertion(Report == 'Selection: Bar (1/3)').
+
+test(a_one_letter_word_is_a_word,
+     [ condition(needs([mouse])),
+       setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    %  One character is not looked for on its own -- it would light up
+    %  most of the screen -- but a word of one character is a word.
+    buffer(T, 'a b a b a'),
+    term_double_click(T, 0, 0),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == 'S...o...o').
+
+test(the_box_says_what_is_being_matched,
+     [ condition(needs([mouse])),
+       setup(test_begin(T)),
+       cleanup(match_options(T))
+     ]) :-
+    %  The box shows what the tally beside it was counted with, and
+    %  turning it off means what it says even though the flag behind it
+    %  was off all along.
+    buffer(T, 'Bar Barn Bar'),
+    term_double_click(T, 0, 0),
+    term_search_options(T, Worded),
+    assertion(Worded == [search_word]),
+    term_search_word(T, @off),
+    term_search_options(T, Plain),
+    assertion(Plain == []),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == 'SSS.ooo..ooo').
+
+test(searching_on_from_a_word_stays_in_word_mode,
+     [ condition(needs([mouse])),
+       setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    buffer(T, 'Bar Barn Bar'),
+    term_double_click(T, 9, 0),
+    isearch_key(T, 0'R),
+    term_highlight(T, 0, Marks),
+    assertion(Marks == 'HHH......ooo'),
+    term_report(T, Report),
+    assertion(Report == 'ISearch backward: Bar (1/2)').
+
+test(a_search_of_its_own_is_not_in_word_mode,
+     [ condition(needs([mouse])),
+       setup(test_begin(T)),
+       cleanup(isearch_stop(T))
+     ]) :-
+    %  \C-\S-f starts without a selection, so without one to take word
+    %  mode from, whatever the selection before it asked for.
+    buffer(T, 'Bar Barn Bar'),
+    term_double_click(T, 0, 0),
+    isearch(T),
+    isearch_type(T, 'Bar'),
+    term_report(T, Report),
+    assertion(Report == 'ISearch backward: Bar (3/3)').
 
 test(the_matches_follow_what_is_selected_now,
      [ setup(test_begin(T))

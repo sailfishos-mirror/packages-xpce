@@ -363,6 +363,7 @@ static uchar_t   *rlc_read_from_window(RlcData b, int sl, int sc,
 static void	rlc_free(void *ptr);
 static void	rlc_set_selection(RlcData b, int sl, int sc, int el, int ec);
 static void	rlc_update_selection_string(RlcData b);
+static bool	rlc_match_word(RlcData b);
 static void	reportSelectionTerminalImage(TerminalImage ti);
 static bool	rlc_alt_screen(RlcData b);
 static const uchar_t *rlc_clicked_link(RlcData b, int x, int y);
@@ -1378,6 +1379,8 @@ static status
 selectionTerminalImage(TerminalImage ti, Int from, Int to)
 { RlcData b = ti->data;
 
+  b->sel_word = false;			/* an index says characters */
+
   if ( isDefault(from) && isDefault(to) )
   { rlc_set_selection(b, 0, 0, 0, 0);
     reportSelectionTerminalImage(ti);
@@ -1622,7 +1625,7 @@ reportSelectionTerminalImage(TerminalImage ti)
       int index;
       int total = rlc_match_count(b, text, len, &s->data,
 				  ti->exact_case == ON,
-				  ti->search_word == ON, hit, &index);
+				  rlc_match_word(b), hit, &index);
 
       rlc_free(text);
       rlc_free(pos);
@@ -1677,7 +1680,8 @@ startIsearchTerminalImage(TerminalImage ti, Name direction, StringObj seed)
     b->isearch.origin_line = b->caret_y;
     b->isearch.origin_char = b->caret_x;
 
-    rlc_set_selection(b, 0, 0, 0, 0);
+    b->sel_word = false;		/* it starts without a selection, */
+    rlc_set_selection(b, 0, 0, 0, 0);	/* so without one to take this from */
   } else
   { /* A copy: the search edits its string as the user types and
      * backspaces, and <-selection_string is not its to edit.
@@ -1820,7 +1824,7 @@ executeIsearchTerminalImage(TerminalImage ti, Int chr, bool repeat)
   ssize_t start = rlc_isearch_start(b, pos, len, fwd, repeat);
   ssize_t times = fwd ? 1 : -1;
   bool ec = ti->exact_case == ON;
-  bool wm = ti->search_word == ON;
+  bool wm = rlc_match_word(b);
   ssize_t hit = ucs_find(b, text, len, start, &ti->search_string->data,
 			 times, 'a', ec, wm);
 
@@ -1907,7 +1911,16 @@ exactCaseTerminalImage(TerminalImage ti, BoolObj exact)
 
 static status
 searchWordTerminalImage(TerminalImage ti, BoolObj word)
-{ assign(ti, search_word, word);
+{ RlcData b = ti->data;
+
+  assign(ti, search_word, word);
+  /* Otherwise the box could not be turned off over a double-clicked
+   * word: the selection would go on asking for whole words and the box
+   * would say something the matching disagrees with.
+   */
+  if ( word == OFF )
+    b->sel_word = false;
+
   return searchAgainTerminalImage(ti);
 }
 
@@ -2049,7 +2062,7 @@ IsearchTerminalImage(TerminalImage ti, EventObj ev)
   { if ( chr == 'c' )			/* what counts as a match */
       return exactCaseTerminalImage(ti, ti->exact_case == ON ? OFF : ON);
     if ( chr == 'w' )
-      return searchWordTerminalImage(ti, ti->search_word == ON ? OFF : ON);
+      return searchWordTerminalImage(ti, rlc_match_word(b) ? OFF : ON);
   }
 
   if ( chr == Control('G') )		/* abort: give back view and hit */
@@ -2145,6 +2158,16 @@ getCellStyleTerminalImage(TerminalImage ti, Int column, Int row)
   fail;
 }
 
+/* What <->search_word says, or what the selection asks for: see
+ * rlc_match_word().  The box on the report bar shows this rather than
+ * the flag, so that it says what is being matched now.
+ */
+
+static BoolObj
+getMatchWordTerminalImage(TerminalImage ti)
+{ answer(rlc_match_word(ti->data) ? ON : OFF);
+}
+
 static Int
 getColumnsTerminalImage(TerminalImage ti)
 { RlcData b = ti->data;
@@ -2237,7 +2260,8 @@ getCwidthTerminalImage(TerminalImage ti, Int chr)
 
 static status
 clearSelectionTerminalImage(TerminalImage ti)
-{ rlc_set_selection(ti->data, 0, 0, 0, 0);
+{ ti->data->sel_word = false;
+  rlc_set_selection(ti->data, 0, 0, 0, 0);
   reportSelectionTerminalImage(ti);
   succeed;
 }
@@ -2778,6 +2802,9 @@ static getdecl get_terminal_image[] =
   GM(NAME_selected, 0, "string", NULL,
      getSelectedTerminalImage,
      NAME_selection, "New string with contents of selection"),
+  GM(NAME_matchWord, 0, "bool", NULL,
+     getMatchWordTerminalImage,
+     NAME_search, "Whether matching asks for whole words now"),
   GM(NAME_cursorPosition, 0, "point", NULL,
      getCursorPositionTerminalImage,
      NAME_cursor, "Logical cursor position as point(col, row)"),
@@ -3285,6 +3312,7 @@ rlc_start_selection(RlcData b, int x, int y)
 
   rlc_translate_mouse(b, x, y, &l, &c);
   b->sel_unit = SEL_CHAR;
+  b->sel_word = false;
   b->sel_org_line = l;
   b->sel_org_char = c;
   rlc_set_selection(b, l, c, l, c);
@@ -3352,6 +3380,11 @@ static void
 rlc_word_selection(RlcData b, int x, int y)
 { int l, c;
 
+  /* Before rlc_set_selection(), which is what works out the matches:
+   * picking a word says to look for that word.
+   */
+  b->sel_word = true;
+
   rlc_translate_mouse(b, x, y, &l, &c);
   if ( rlc_between(b, b->first, b->last, l) )
   { RlcTextLine tl = &b->lines[l];
@@ -3390,6 +3423,7 @@ static void
 rlc_line_selection(RlcData b, int x, int y)
 { int l, c;
 
+  b->sel_word = false;
   rlc_translate_mouse(b, x, y, &l, &c);
   if ( rlc_between(b, b->first, b->last, l) )
   { RlcTextLine tl = &b->lines[l];
@@ -3477,7 +3511,8 @@ rlc_extend_selection(RlcData b, int x, int y)
 
 static void
 rlc_select_all(RlcData b)
-{ rlc_set_selection(b, b->first, 0, b->last, b->width);
+{ b->sel_word = false;
+  rlc_set_selection(b, b->first, 0, b->last, b->width);
 }
 
 /* Text of the region that starts at cell `sc` of line `sl` and ends
@@ -3602,6 +3637,24 @@ rlc_copy(RlcData b, Name to)	/* NAME_clipboard or NAME_primary */
  * not a selection we look for.
  */
 
+/* Whether what is looked for has to be a whole word.  The two ways of
+ * saying so: the flag, which the box on the report bar sets and which
+ * outlives what used it, and the way the selection was made -- picking
+ * a word with a double click says to look for that word, not for the
+ * letters it happens to be made of.
+ *
+ * A search takes this from the selection it was seeded with, which is
+ * why `sel_word' is left alone while one runs; an unseeded search
+ * clears it along with the selection it starts without.
+ */
+
+static bool
+rlc_match_word(RlcData b)
+{ TerminalImage ti = b->object;
+
+  return ti && (ti->search_word == ON || b->sel_word);
+}
+
 #define SEL_MATCH_MAX 100		/* longest selection we look for */
 
 static uchar_t *
@@ -3634,7 +3687,7 @@ rlc_selection_needle(RlcData b)
   }
 
   if ( blank || len > SEL_MATCH_MAX ||
-       (len < 2 && ti->search_word != ON) )
+       (len < 2 && !rlc_match_word(b)) )
   { rlc_free(sel);
     return NULL;
   }
@@ -3931,7 +3984,7 @@ rlc_match_spans(RlcData b, rlc_span *spans, int max)
     return 0;
 
   bool ec = ti->exact_case == ON;
-  bool wm = ti->search_word == ON;
+  bool wm = rlc_match_word(b);
   ssize_t here = 0;
 
   while( n < max )

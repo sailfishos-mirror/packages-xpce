@@ -288,6 +288,7 @@ typedef struct rlc_data
     int		caret_y;
   } saved;
   int		sel_unit;		/* SEL_CHAR, SEL_WORD, SEL_LINE */
+  bool		sel_word;		/* Match this selection as a word */
   int		sel_org_line;		/* line origin of the selection */
   int		sel_org_char;		/* char origin of the selection */
   int		sel_start_line;		/* starting line for selection */
