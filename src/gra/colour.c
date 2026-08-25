@@ -130,9 +130,18 @@ initialiseColour(Colour c, Name name, Int r, Int g, Int b, Int a, Name model)
 }
 
 
+/* Both tables hold their Colours with `refer' none, so a Colour that is
+ * garbage collected has to take its entries out itself.  Leaving one
+ * behind hands the next lookup a freed object: two colours can share a
+ * name or an RGBA value, so only remove an entry that is still this one.
+ */
+
 static status
 unlinkColour(Colour c)
-{ deleteHashTable(ColourTable, c->name);
+{ if ( getMemberHashTable(ColourTable, c->name) == c )
+    deleteHashTable(ColourTable, c->name);
+  if ( getMemberHashTable(RevColourTable, c->rgba) == c )
+    deleteHashTable(RevColourTable, c->rgba);
 
   succeed;
 }
