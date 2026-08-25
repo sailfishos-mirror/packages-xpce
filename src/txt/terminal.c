@@ -7008,8 +7008,11 @@ rlc_copy_line(RlcTextLine dst, const RlcTextLine src)
     dst->size = src->size;
     memcpy(dst->text, src->text, bytes);
     dst->changed = false;
+    dst->adjusted = true;		/* the copy holds exactly `size` cells */
     dst->softreturn = src->softreturn;
   }
+  dst->eol_erased = src->eol_erased;	/* the background colour erase of */
+  dst->eol_flags  = src->eol_flags;	/* the tail is part of the line */
   if ( src->links )
     dst->links = rlc_copy_links(src->links);
 }
@@ -7052,7 +7055,8 @@ rlc_restore_screen(RlcData b)
 	if ( nl->size > b->width ) /* TODO: we should re-flush */
 	{ nl->size = b->width;
 	  nl->softreturn = false;
-	  rlc_adjust_line(b, i);
+	  nl->adjusted = false;		/* the buffer is still the old size */
+	  rlc_adjust_line(b, line);
 	}
 	line = NextLine(b, line);
       } else
