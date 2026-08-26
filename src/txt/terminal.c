@@ -7700,12 +7700,12 @@ rlc_putansi(RlcData b, int chr)
 	  CMD(rlc_restore_cursor(b));
 	  b->cmdstat = CMD_INITIAL;
 	  break;
-	case '=':
+	case '=':			/* DECKPAM: application keypad */
 	  b->app_keypad_mode = true;
 	  b->cmdstat = CMD_INITIAL;
 	  break;
-	case '>':
-	  b->app_keypad_mode = true;
+	case '>':			/* DECKPNM: numeric keypad */
+	  b->app_keypad_mode = false;
 	  b->cmdstat = CMD_INITIAL;
 	  break;
 	case 'P':			/* DCS introducer */
