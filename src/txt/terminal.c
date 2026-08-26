@@ -8263,12 +8263,10 @@ rlc_open_pty_pair(RlcData b, int cols, int rows)
   }
 
   char *slave = ptsname(b->pty.master_fd);
-#if 0
   if ( !slave )
   { close(b->pty.master_fd);
     return errorPce(b->object, NAME_cannotPtsname);
   }
-#endif
 
   strncpy(b->pty.slave_name, slave, sizeof(b->pty.slave_name) - 1);
   b->pty.slave_fd = open_pty_slave(b);
