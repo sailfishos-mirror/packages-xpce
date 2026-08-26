@@ -556,31 +556,49 @@ term_selection_string(terminal(_, xpce(_, TI)), Atom) :-
 
 %!  term_screenshot(+T, -Pixels) is semidet.
 %
-%   A coarse sample of the pixels of the whole window.  Two samples of
-%   the same text differ exactly when it was painted differently, which
-%   is how the suite asserts that an attribute reached the painter: it
-%   need not know which font was chosen, nor where the cells are.  It
-%   cannot know the latter anyway -- Pango lays out a run as a whole, so
-%   the glyphs of a row are not aligned to the cell grid and two halves
-%   of one row cannot be compared with each other.
+%   A coarse sample of the pixels of the first two rows of the terminal.
+%   Two samples of the same text differ exactly when it was painted
+%   differently, which is how the suite asserts that an attribute reached
+%   the painter: it need not know which font was chosen, nor where the
+%   cells are.  It cannot know the latter anyway -- Pango lays out a run
+%   as a whole, so the glyphs of a row are not aligned to the cell grid
+%   and two halves of one row cannot be compared with each other.
 %
 %   Sample rather than compare whole images: a full window is a megapixel
 %   read one `get' at a time, and every attribute this distinguishes
-%   changes far more than one pixel in eighty.
+%   changes far more than one pixel in eighty.  The sample must start at
+%   the terminal rather than at the frame: above it sits the menu bar,
+%   which never changes, and a sample of that compares equal whatever the
+%   terminal was told to paint.
 
-term_screenshot(terminal(_, xpce(Frame, _)), Pixels) :-
+term_screenshot(terminal(_, xpce(Frame, TI)), Pixels) :-
     get(Frame, image, Img),
     get(Img, size, size(W, H)),
+    get(Frame?area, width, FW),
+    Scale is W/FW,                       % frame <-image is in device pixels
+    term_origin(TI, X0, Y0),
     findall(P,
             ( between(0, 200, I),
-              X is I*2,
+              X is round((X0+I*2)*Scale),
               X < W,
-              between(0, 40, Y),
+              between(0, 40, J),
+              Y is round((Y0+J)*Scale),
               Y < H,
               get(Img, pixel(X, Y), C),
               get(C, red, P)
             ),
             Pixels).
+
+%!  term_origin(+TerminalImage, -X, -Y) is det.
+%
+%   Top left corner of the terminal in the coordinates of its frame.
+
+term_origin(TI, X, Y) :-
+    get(TI, area, area(TX, TY, _, _)),
+    get(TI, window, Win),
+    get(Win, area, area(WX, WY, _, _)),
+    X is WX+TX,
+    Y is WY+TY.
 
 %!  term_find(+T, +From, +For, -Index) is semidet.
 %!  term_find(+T, +From, +For, +Times, +Return, +Case, +Word, -Index) is semidet.
