@@ -3982,6 +3982,41 @@ exclude_trailing_empty(List, Kept) :-
 drop_empty_prefix([''|T], R) :- !, drop_empty_prefix(T, R).
 drop_empty_prefix(L, L).
 
+test(resize_keeps_a_prompt_the_program_wrote,
+     [ setup(resize_test_begin(T)),
+       cleanup(resize_cols(T, 80, _))
+     ]) :-
+    %  A read that starts where the output left the caret has no prompt
+    %  of its own: `format("name: ")' put those columns there as
+    %  ordinary output.  libedit is told about them anyway (it is handed
+    %  them as the front of its prompt), so the resize repaints the
+    %  prompt and leaves the input where it was.  Without that libedit
+    %  takes the line to start in column 0 and the redraw paints
+    %  `abcdefgh' over `name: '.
+    type(T, 'format("name: "), read_line_to_string(user_input, S), \c
+             format("[~w]~n", [S]).'),
+    key(T, enter),
+    assertion(wait_until(waiting_for(T, 'name: '), 15)),
+    type(T, 'abcdefgh'),
+    drive(0.3),
+    cursor(T, Col, Row),
+    row_text(T, Row, Before),
+    resize_cols(T, 78, _),
+    drive(0.3),
+    row_text(T, Row, After),
+    assertion(After == Before),
+    assert_cursor(T, Col, Row),
+    %  And the line is still the one being edited, at the offset the
+    %  screen shows rather than six columns to the left of it.
+    key(T, ctrl_a),
+    drive(0.3),
+    Start is Col-8,
+    assert_cursor(T, Start, Row),
+    key(T, ctrl_e),
+    key(T, enter),
+    assertion(wait_until(marker_on_screen(T, '[abcdefgh]'), 15)),
+    assertion(wait_for_prompt(T)).
+
 :- end_tests(terminal_resize).
 
 
