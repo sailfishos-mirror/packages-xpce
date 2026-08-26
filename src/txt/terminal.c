@@ -7608,8 +7608,9 @@ rlc_putansi(RlcData b, int chr)
 #endif
 
 #ifdef XPCE_TERM_TRACE
-  { static const char *names[] = {
-      "INITIAL", "ESC", "ANSI", "OSC", "DEC_PRIVATE", "G0", "G1"
+  { static const char *names[] = {		/* must track ansi_state */
+      "INITIAL", "ESC", "G0", "G1", "ANSI", "OSC", "OSCARG", "OSCTEXT",
+      "DEC_PRIVATE", "CSI_INTERMEDIATE", "DCS", "DCS_ESC"
     };
     const char *st = (b->cmdstat >= 0 && b->cmdstat < (int)(sizeof(names)/sizeof(*names)))
 		    ? names[b->cmdstat] : "?";
