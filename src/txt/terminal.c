@@ -49,9 +49,6 @@
 #include <h/charwidth.h>
 #include "terminal.h"
 #include "../sdl/sdlevent.h"
-#ifdef HAVE_POLL
-#include <poll.h>
-#endif
 #if defined(__FreeBSD__) || defined(__DragonFly__)
 #include <sys/sysctl.h>
 #include <sys/user.h>
@@ -63,17 +60,14 @@
  *
  * ## I/O Handling
  *
- * Typed  characters are  added to  the terminal's  input queue  using
- * rlc_add_queue().   The _client_  reads input  using getch().   This
- * returns the  next character  from the input  queue or  blocks until
- * input  becomes available.   The blocking  mechanism depends  on the
- * platform.   On Unix  systems we  use a  pipe as  this allows  us to
- * process signals.  On Windows we use an event (TBD).
+ * Typed characters  are encoded as  UTF-8 and written to  the client
+ * using rlc_send().  On  Unix systems that is the  master side of the
+ * pty; on Windows the input handle of the pseudo console.  The client
+ * reads them  as a normal  terminal, so the  line discipline (or  the
+ * ConPTY) does the echoing and line editing.
  */
 
 #define MAXLINE	     1024		/* max chars per line */
-
-#define GWL_DATA	0		/* offset for client data */
 
 #define CHG_RESET	0		/* unchanged */
 #define CHG_CHANGED	1		/* changed, but no clear */
@@ -90,9 +84,6 @@
 
 #define ESC 27				/* the escape character */
 #define S_ESC "\033"
-
-#define IMODE_RAW	1		/* char-by-char */
-#define IMODE_COOKED	2		/* line-by-line */
 
 #define NextLine(b, i) ((i) < (b)->height-1 ? (i)+1 : 0)
 #define PrevLine(b, i) ((i) > 0 ? (i)-1 : (b)->height-1)
@@ -138,9 +129,6 @@ tlog(const char *fmt, ...)
 #else
 # define tlog(...) ((void)0)
 #endif
-
-#define OPT_SIZE	0x01
-#define OPT_POSITION	0x02
 
 		 /*******************************
 		 *	  UNICODE WIDTH		*
@@ -407,6 +395,8 @@ static int	rlc_interrupt_char(RlcData b);
 static int	rlc_suspend_char(RlcData b);
 static bool	rlc_caret_to_click(RlcData b, int x, int y);
 static void	rlc_resize_pty(RlcData b, int cols, int rows);
+static void	rlc_translate_mouse(RlcData b, int x, int y,
+				   int *line, int *chr);
 static Name	TCHAR2Name(const uchar_t *str);
 static StringObj TCHAR2String(const uchar_t *str);
 static void	rlc_scroll_bubble(RlcData b,
@@ -2917,7 +2907,6 @@ status
 makeClassTerminalImage(Class class)
 { declareClass(class, &terminal_image_decls);
 
-//  setCloneFunctionClass(class, cloneEditor);
   setRedrawFunctionClass(class, RedrawAreaTerminalImage);
 
   succeed;
@@ -2960,15 +2949,6 @@ ucscpy(uchar_t *dst, const uchar_t *src)
     *dst++ = *src++;
   *dst = 0;
 }
-
-#if 0
-static void
-ucsncpy(uchar_t *dst, const uchar_t *src, size_t len)
-{ while(*src && len-- > 0)
-    *dst++ = *src++;
-  *dst = 0;
-}
-#endif
 
 static int
 ucscmp(const uchar_t *s1, const uchar_t *s2)
@@ -3193,15 +3173,12 @@ rlc_set_selection(RlcData b, int sl, int sc, int el, int ec)
 }
 
 
-void
+static void
 rlc_translate_mouse(RlcData b, int x, int y, int *line, int *chr)
 { int ln = b->window_start;
   int n = b->window_size;		/* # lines */
   RlcTextLine tl;
   x-= b->cw;				/* margin */
-
-//  if ( !b->window )
-//    return;
 
   while( y > b->ch && ln != b->last && n-- > 0 )
   { ln = NextLine(b, ln);
@@ -4864,10 +4841,6 @@ rlc_paint_text(RlcData b,
 
       int x0 = *cx;
       *cx += chars_columns(s, segment) * b->cw;
-#if 0
-      fprintf(stderr, "Print \"%s\"[%d] at %d[%d],%d using %s\n",
-	      t, ulen, x0, *cx-x0, ty, pp(ti->font));
-#endif
       r_clear(x0, ty-b->cb, *cx-x0, b->ch);
       if ( notNil(ti->nfd_style) && !isDefault(ti->nfd_style) )
       { Colour nfd_bg = ti->nfd_style->background;
@@ -5551,7 +5524,6 @@ rlc_resize(RlcData b, int w, int h)
 	pl->adjusted = true;
 	i = (int)(pl - b->lines);
 	update_links(pl, tl, moved);
-//	DEBUG(Dprint_lines(b, b->first, b->last));
       } else				/* put in next line */
       { RlcTextLine nl;
 	int move = tl->size - w;
@@ -6060,44 +6032,21 @@ rlc_caret_down(RlcData b, int arg)
 }
 
 
-static void
-rlc_caret_forward(RlcData b, int arg)
-{ tlog("rlc_caret_forward(arg=%d) entry caret_x=%d caret_y=%d\n",
-       arg, b->caret_x, b->caret_y);
-  /* Move by VISUAL columns, not cells.  An NFD cluster takes several
-     cells but one visual column, so cell-indexed arithmetic moves the
-     caret by a fraction of a column for combining content.  Wide-char
-     right-half placeholders are their own visual column (a `\b` steps
-     through a wide char in two halves). */
-  while(arg-- > 0)
-  { RlcTextLine tl = &b->lines[b->caret_y];
-    int cur_vcol = rlc_cell_to_vcol(tl, b->caret_x);
-    int new_vcol = cur_vcol + 1;
-    if ( new_vcol >= b->width )
-    { b->lines[b->caret_y].softreturn = true;
-      b->caret_x = 0;
-      rlc_caret_down(b, 1);
-    } else
-    { b->caret_x = rlc_vcol_to_cell(tl, new_vcol);
-    }
-  }
-
-  b->changed |= CHG_CARET;
-  tlog("rlc_caret_forward exit  caret_x=%d caret_y=%d\n",
-       b->caret_x, b->caret_y);
-}
-
-
 /* Cursor motion stops at the edge of the line.
  *
  * Only writing a character wraps: ECMA-48 has CUF not pass the last
  * column, and a terminal without `bw' does not take a backspace in
- * column 0 to the line above.  rlc_caret_forward() above moves over
- * *text*, which does wrap, and rlc_goto_mark() replays text with it.
+ * column 0 to the line above.
  *
  * Wrapping on a cursor motion also marked the row it left as
  * soft-wrapped, so a later rewrap read two rows as one line and the
  * screen filled with duplicated text.
+ *
+ * Motion is by VISUAL columns, not cells.  An NFD cluster takes
+ * several cells but one visual column, so cell-indexed arithmetic
+ * would move the caret by a fraction of a column for combining
+ * content.  Wide-char right-half placeholders are their own visual
+ * column (a `\b` steps through a wide char in two halves).
  */
 
 static void
@@ -6120,7 +6069,6 @@ static void
 rlc_caret_backward(RlcData b, int arg)
 { tlog("rlc_caret_backward(arg=%d) entry caret_x=%d caret_y=%d\n",
        arg, b->caret_x, b->caret_y);
-  /* See rlc_caret_forward: move by visual columns. */
   while(arg-- > 0)
   { RlcTextLine tl = &b->lines[b->caret_y];
     int cur_vcol = rlc_cell_to_vcol(tl, b->caret_x);
@@ -6859,14 +6807,15 @@ rlc_put(RlcData b, int chr)
 
     tl->changed |= CHG_CHANGED;
     /* Advance caret_x by the character's cell width directly — do NOT go
-       through rlc_caret_forward because that skips zero-width cells, which
-       would cause double-advance for wide chars whose placeholder is 0-width.
-       We DO NOT skip existing combining marks following the new base: when
-       a client re-echoes a grapheme cluster (e.g. libedit re-writing a base
-       to move the cursor), it sends base + combiners in sequence.  Skipping
-       here would advance past a combiner that the very next rlc_put is about
-       to re-write, causing that write to land one cell too far right and
-       clobber the following cluster's base.  Do NOT wrap here either:
+       through the visual-column motion of rlc_cursor_forward, which skips
+       zero-width cells and would double-advance for wide chars whose
+       placeholder is 0-width.  We DO NOT skip existing combining marks
+       following the new base: when a client re-echoes a grapheme cluster
+       (e.g. libedit re-writing a base to move the cursor), it sends base +
+       combiners in sequence.  Skipping here would advance past a combiner
+       that the very next rlc_put is about to re-write, causing that write
+       to land one cell too far right and clobber the following cluster's
+       base.  Do NOT wrap here either:
        delayed wrap above handles the end-of-line transition on the next
        base, which lets a trailing combiner still attach to this base. */
     b->caret_x += dw;
@@ -7674,8 +7623,7 @@ rlc_putansi(RlcData b, int chr)
       { case '\b':
 	  CMD(rlc_caret_backward(b, 1));
 	  break;
-        case 0x7:
-	  //MessageBeep(MB_ICONEXCLAMATION);
+        case 0x7:			/* BEL */
 	  send(b->object, NAME_flash, EAV);
 	  break;
 	case '\r':
@@ -8139,83 +8087,6 @@ rlc_putansi(RlcData b, int chr)
 #ifdef _DEBUG
   (void)cmd;
 #endif
-}
-
-
-		 /*******************************
-		 *	LINE-READ SUPPORT	*
-		 *******************************/
-
-void
-rlc_get_mark(rlc_console c, RlcMark m)
-{ RlcData b = rlc_get_data(c);
-
-  m->mark_x = b->caret_x;
-  m->mark_y = b->caret_y;
-}
-
-
-void
-rlc_goto_mark(rlc_console c, RlcMark m, const uchar_t *data, size_t offset)
-{ RlcData b = rlc_get_data(c);
-
-  b->caret_x = m->mark_x;
-  b->caret_y = m->mark_y;
-
-  for( ; offset-- > 0; data++ )
-  { switch(*data)
-    { case '\t':
-	rlc_tab(b);
-	break;
-      case '\n':
-	b->caret_x = 0;
-        rlc_caret_down(b, 1);
-	break;
-      default:
-	rlc_caret_forward(b, 1);
-    }
-  }
-}
-
-
-void
-rlc_erase_from_caret(rlc_console c)
-{ RlcData b = rlc_get_data(c);
-  int i = b->caret_y;
-  int x = b->caret_x;
-  int last = rlc_add_lines(b, b->window_start, b->window_size);
-
-  do
-  { RlcTextLine tl = &b->lines[i];
-
-    if ( tl->size != x )
-    { tl->size = x;
-      tl->changed |= CHG_CHANGED|CHG_CLEAR;
-    }
-
-    i = NextLine(b, i);
-    x = 0;
-  } while ( i != last );
-}
-
-
-void
-rlc_putchar(rlc_console c, int chr)
-{ RlcData b = rlc_get_data(c);
-
-  rlc_putansi(b, chr);
-}
-
-
-uchar_t *
-rlc_read_screen(rlc_console c, RlcMark f, RlcMark t)
-{ RlcData b = rlc_get_data(c);
-  uchar_t *buf;
-
-  buf = rlc_read_from_window(b, f->mark_y, f->mark_x,
-			     t->mark_y, t->mark_x, "\r\n");
-
-  return buf;
 }
 
 
