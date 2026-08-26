@@ -3024,9 +3024,14 @@ test(click_moves_the_caret_without_a_prompt, [setup(test_begin(T))]) :-
     cursor(T, End, R),
     Back is End-4,
     click(T, Back, R),
-    cursor(T, C, R1),
-    assertion(R1 =:= R),
-    assertion(C =:= Back),
+    %  Reported with the row and the screen rather than as a bare
+    %  comparison: this is the one caret assertion in the suite that a
+    %  redraw can move.  libedit has no prompt here, so the line starts
+    %  at column 0 as far as it is concerned; a full refresh -- a
+    %  SIGWINCH, or a size change it notices at a keypress -- paints the
+    %  input over `name: ' and leaves the caret six columns to the left
+    %  of where the click asked for it.  A dump says so at a glance.
+    assert_cursor(T, Back, R),
     type(T, 'XY'),
     key(T, enter),
     assertion(wait_until(marker_on_screen(T, '[abcdXYefgh]'), 15)),
