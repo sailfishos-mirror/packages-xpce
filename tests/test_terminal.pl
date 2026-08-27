@@ -6207,6 +6207,69 @@ test(a_continued_command_folds_from_its_first_line,
     assertion(marker_on_screen(T, 'format("fold-~w~n", [QY])).')),
     assertion(send(Block, unfold)).
 
+test(remove_takes_a_command_out_and_the_terminal_goes_on,
+     [setup(test_begin(T))]) :-
+    %  The one that matters: after the lines have gone from under it, the
+    %  client must still be writing where the terminal thinks it is.
+    run_goal(T, 'format("rm-one~n").',   'rm-one'),
+    run_goal(T, 'format("rm-two~n").',   'rm-two'),
+    run_goal(T, 'format("rm-three~n").', 'rm-three'),
+    finished_blocks(T, Before),
+    length(Before, N0),
+    term_length(T, Len0),
+    tt_block_of(Before, 'rm-two', Middle),
+    assertion(send(Middle, remove)),
+    assertion(\+ marker_on_screen(T, 'rm-two')),
+    assertion(marker_on_screen(T, 'rm-one')),
+    assertion(marker_on_screen(T, 'rm-three')),
+    term_length(T, Len1),
+    assertion(Len1 < Len0),
+    finished_blocks(T, After),
+    length(After, N1),
+    assertion(N1 =:= N0-1),
+    assertion(get(Middle, terminal, @nil)),
+    %  the neighbours still say what they printed
+    tt_block_of(After, 'rm-one', One),
+    term_block_content(One, output, OutOne),
+    assertion(sub_atom(OutOne, _, _, _, 'rm-one')),
+    assertion(\+ sub_atom(OutOne, _, _, _, 'rm-three')),
+    %  and the client keeps working
+    run_goal(T, 'format("rm-after~n").', 'rm-after'),
+    assertion(marker_on_screen(T, 'rm-after')),
+    assertion(wait_for_prompt(T)).
+
+test(a_command_typed_over_several_lines_goes_whole,
+     [setup(test_begin(T))]) :-
+    tt_type_lines(T, ['forall(between(1,2,QR),',
+                      '  format("rmm-~w~n", [QR])).']),
+    assertion(wait_until(marker_on_screen(T, 'rmm-2'), 15)),
+    assertion(wait_for_prompt(T)),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    assertion(marker_on_screen(T, 'forall(between(1,2,QR),')),
+    assertion(send(Block, remove)),
+    assertion(\+ marker_on_screen(T, 'forall(between(1,2,QR),')),
+    assertion(\+ marker_on_screen(T, 'rmm-1')),
+    assertion(\+ marker_on_screen(T, 'format("rmm-~w~n", [QR])).')),
+    run_goal(T, 'format("rmm-after~n").', 'rmm-after').
+
+test(the_command_being_typed_cannot_be_removed, [setup(test_begin(T))]) :-
+    term_blocks(T, Blocks),
+    last(Blocks, Current),
+    assertion(\+ get(Current, end, _)),
+    assertion(\+ send(Current, remove)),
+    assertion(wait_for_prompt(T)).
+
+%!  tt_block_of(+Blocks, +Marker, -Block) is semidet.
+%
+%   The block whose output holds Marker.
+
+tt_block_of(Blocks, Marker, Block) :-
+    member(Block, Blocks),
+    term_block_content(Block, output, Out),
+    sub_atom(Out, _, _, _, Marker),
+    !.
+
 test(a_copy_of_a_command_is_what_was_typed, [setup(test_begin(T))]) :-
     %  Two things the screen has that the command has not: the return
     %  that entered it, and the continuation prompt the client drew down

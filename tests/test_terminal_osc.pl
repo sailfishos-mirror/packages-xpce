@@ -353,6 +353,27 @@ test(output, [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
     assertion(O1 == 'out1-1\nout1-2\nout1-3\n'),
     assertion(O2 == 'out2-1\nout2-2\nout2-3\n').
 
+test(erasing_the_display_lets_go_of_what_it_erased,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    %  ED 2 destroys the lines a block was made of.  A mark that was
+    %  recorded and has since gone is not a command still running: the
+    %  block must say nothing rather than reach to where the client is
+    %  writing, or folding it would swallow whatever came after.
+    session(TI, 2),
+    blocks(TI, Before),
+    assertion(Before \== []),
+    send(TI, insert, '\e[2J\e[H'),      % erase the display, caret home
+    blocks(TI, After),
+    assertion(After == []),             % nothing of them is left to name
+    %  and what comes next is neither swallowed by a stale fold nor
+    %  reported as part of a command that has gone
+    session(TI, 1),
+    screen(TI, Rows),
+    assertion(memberchk('out1-1', Rows)),
+    blocks(TI, [Fresh|_]),
+    get(Fresh, content, output, S), text(S, Out),
+    assertion(Out == 'out1-1\nout1-2\nout1-3\n').
+
 test(a_command_does_not_include_the_return_that_entered_it,
      [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
     session(TI, 1),
@@ -568,6 +589,65 @@ test(folding_while_scrolled_back_leaves_the_view_alone,
     Blocks = [First|_],
     send(First, fold),
     assertion(row_text(TI, 0, Top)).
+
+test(remove_closes_the_gap, [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    session(TI, 3),
+    get(TI, length, Len0),
+    blocks(TI, [_,B2|_]),
+    assertion(send(B2, remove)),
+    screen(TI, Rows),
+    assertion(Rows == ['?- goal1.','out1-1','out1-2','out1-3',
+                       '?- goal3.','out3-1','out3-2','out3-3','?-']),
+    get(TI, length, Len1),
+    assertion(Len1 < Len0),
+    assertion(get(B2, terminal, @nil)),
+    assertion(\+ get(TI, find, 0, 'out2-2', _)).
+
+test(remove_leaves_its_neighbours_saying_the_same,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    %  `D' lands on the line the prompt after it goes on, so the block
+    %  before the one removed had a mark inside the range.
+    session(TI, 3),
+    blocks(TI, [B1,B2,B3|_]),
+    send(B2, remove),
+    get(B1, content, output, S1), text(S1, O1),
+    get(B3, content, output, S3), text(S3, O3),
+    assertion(O1 == 'out1-1\nout1-2\nout1-3\n'),
+    assertion(O3 == 'out3-1\nout3-2\nout3-3\n'),
+    get(B1, content, command, C1), text(C1, Cmd1),
+    assertion(Cmd1 == 'goal1.').
+
+test(a_running_command_cannot_be_removed,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    maplist(osc133, ['A','B','C'], [A,B,C]),
+    atomic_list_concat([A,'?- ',B,'slow.\r\n',C,'partial\r\n'], Text),
+    send(TI, insert, Text),
+    blocks(TI, [Blk]),
+    assertion(\+ send(Blk, remove)).
+
+test(remove_keeps_the_folds_of_the_others,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    session(TI, 3),
+    blocks(TI, [B1,B2,B3|_]),
+    send(B3, fold),
+    send(B2, remove),
+    assertion(get(B3, folded, @on)),
+    screen(TI, Rows),
+    assertion(\+ memberchk('out3-2', Rows)),
+    assertion(memberchk('?- goal3.', Rows)),
+    assertion(memberchk('out1-2', Rows)),
+    send(B3, unfold),
+    screen(TI, Back),
+    assertion(memberchk('out3-2', Back)).
+
+test(remove_ends_a_search_that_may_be_looking_at_it,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    session(TI, 3),
+    blocks(TI, [_,B2|_]),
+    send(TI, selection, 0, 10),
+    assertion(send(TI, has_selection)),
+    send(B2, remove),
+    assertion(\+ send(TI, has_selection)).
 
 test(scroll_to_opens_a_fold,
      [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-

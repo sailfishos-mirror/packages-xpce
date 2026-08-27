@@ -607,7 +607,10 @@ block_popup(PT, Terminal) :-
                           message(Terminal, select_block, output),
                           end_group := @on),
                 menu_item(repeat_command,
-                          message(Terminal, repeat_block))
+                          message(Terminal, repeat_block),
+                          end_group := @on),
+                menu_item(remove_command,
+                          message(Terminal, remove_block))
               ]).
 
 unlink(PT) :->
@@ -751,6 +754,11 @@ update_block_popup(PT, P:popup, Ev:event) :->
     (   at_prompt(PT)
     ->  send(Repeat, active, @on)
     ;   send(Repeat, active, @off)   % typing would go to what is running
+    ),
+    get(P, member, remove_command, Remove),
+    (   get(Block, end, _)           % it has finished writing
+    ->  send(Remove, active, @on)
+    ;   send(Remove, active, @off)
     ).
 
 set_label(P, Name, Label) :-
@@ -774,6 +782,13 @@ select_block(PT, What:[{command,output,all}]) :->
     get(PT, current_block, Block),
     Block \== @nil,
     send(Block, select, What).
+
+remove_block(PT) :->
+    "Take the block out of the buffer"::
+    get(PT, current_block, Block),
+    Block \== @nil,
+    send(Block, remove),
+    send(PT, slot, current_block, @nil).
 
 repeat_block(PT) :->
     "Type the command of the block again"::

@@ -24,6 +24,9 @@ marks nothing produces no blocks.
 
 ## Lifetime {#class-terminal_block-lifetime}
 
+`->remove` is the one thing that changes the buffer rather than reading
+it: everything else here only says what is already there.
+
 A block outlives the marks it was made from but not the text it points
 at.  Its positions are lines of the scrollback, so a line pushed out of
 the buffer takes with it the marks that named it, and a block with
@@ -83,6 +86,22 @@ outlives them.
 - terminal_block->scroll_to
     Scroll the prompt of the block into view, opening a fold that hides
     it.
+
+- terminal_block->remove
+    Take the command out of the buffer altogether: the lines it covers
+    go and the text under them moves up into the gap.  The block is
+    dropped from `<-blocks` with its `<-terminal` set to `@nil`.  There
+    is no undo.
+
+    The buffer gets shorter at the end the client is writing to, so the
+    older history is left where it is.  Everything that names a line by
+    its place in the scrollback is moved with the text: the caret, the
+    window and the marks of every other command.  The selection and a
+    running incremental search are ended rather than followed, since what
+    they were on may be what is going.
+
+    Fails for a command still running, for one whose output has not been
+    marked as ended, and while an application holds the alternate screen.
 
 - terminal_block->fold
 - terminal_block->unfold

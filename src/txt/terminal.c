@@ -410,6 +410,7 @@ static void	rlc_expire_blocks(RlcData b, int dying);
 static void	rlc_sweep_blocks(RlcData b);
 static TerminalBlock rlc_last_block(RlcData b);
 static void	rlc_restamp_folds(RlcData b);
+static void	rlc_keep_end_in_view(RlcData b, bool at_end);
 static bool	rlc_fold_lines(RlcData b, TerminalBlock tb,
 			       int *headp, int *fromp, int *top);
 static TerminalBlock rlc_fold_head_block(RlcData b, int line);
@@ -2152,7 +2153,7 @@ static Point
 getCursorPositionTerminalImage(TerminalImage ti)
 { RlcData b = ti->data;
   int col = rlc_cell_to_vcol(&b->lines[b->caret_y], b->caret_x);
-  int row = rlc_count_lines(b, b->window_start, b->caret_y);
+  int row = rlc_view_count(b, b->window_start, b->caret_y);
 
   answer(answerObject(ClassPoint, toInt(col), toInt(row), EAV));
 }
@@ -2806,6 +2807,18 @@ block_range(TerminalBlock tb, Name what,
       return false;
   }
 
+  /* An anchor that was recorded and has since gone -- its line erased by
+   * ED 2, or pushed out of the scroll-back -- is not the same as one that
+   * never arrived.  The first means the block can no longer say where it
+   * ends, and nothing may be read from it; only the second, a command
+   * still running, reaches to where the client is writing.
+   */
+  { int endl = what == NAME_command ? a->output_line : a->end_line;
+
+    if ( endl != ANCHOR_NONE && !block_anchor(b, endl) )
+      return false;
+  }
+
   if ( what == NAME_command )
   { if ( block_anchor(b, a->output_line) )
     { /* The output begins where the line the user entered ended, which
@@ -3040,10 +3053,14 @@ foldedTerminalBlock(TerminalBlock tb, BoolObj folded)
       fail;				/* still running, or nothing to hide */
   }
 
+  bool at_end = b && rlc_view_count(b, b->window_start, b->last)
+			< b->window_size;
+
   assign(tb, folded, folded);
 
   if ( b )
   { rlc_restamp_folds(b);
+    rlc_keep_end_in_view(b, at_end);
     b->changed |= CHG_CARET|CHG_CLEAR|CHG_CHANGED;
     rlc_request_redraw(b);
   }
@@ -3067,6 +3084,192 @@ unfoldTerminalBlock(TerminalBlock tb)
 static status
 toggleFoldTerminalBlock(TerminalBlock tb)
 { return foldedTerminalBlock(tb, isOn(tb->folded) ? OFF : ON);
+}
+
+
+		 /*******************************
+		 *          REMOVING            *
+		 *******************************/
+
+/* Taking a command out of the buffer altogether: the lines it covers go
+ * and the text under them moves up into the gap.  Under them rather than
+ * over: the history a removal was not about stays where it is, and the
+ * buffer gets shorter at the end the client is writing to, which is the
+ * end it can afford to lose.
+ *
+ * Everything that names a line by its place in the ring has to be told.
+ * The selection and an incremental search are ended rather than
+ * followed -- what they were on may be what is going -- and the caret,
+ * the window and the marks of every other command are moved with the
+ * text.
+ */
+
+/* The lines a block covers: from the line its command starts on to the
+ * last line of its output.  `D' lands on the line the prompt after it
+ * goes on, which belongs to that prompt and not to this command.
+ */
+
+static bool
+rlc_block_lines(RlcData b, TerminalBlock tb, int *fromp, int *top)
+{ int from, sc, el, ec;
+
+  if ( isOn(tb->running) ||
+       !block_range(tb, NAME_all, &from, &sc, &el, &ec) )
+    return false;
+  if ( !block_anchor(b, tb->anchors->end_line) )
+    return false;			/* it has not finished */
+
+  from = rlc_logical_start(b, from);
+  *top = ec == 0 ? PrevLine(b, el) : el;
+  *fromp = from;
+
+  return rlc_count_lines(b, b->first, from) <=
+	 rlc_count_lines(b, b->first, *top);
+}
+
+
+/** Where a ring position ends up once the lines `from'..`to' are gone:
+ * one below the range moves up with the text, one above it does not
+ * move at all, and one inside it has nothing left to name.
+ */
+
+static int
+rlc_position_after_removal(RlcData b, int from, int to, int n, int line)
+{ if ( line == ANCHOR_NONE )
+    return ANCHOR_NONE;
+
+  int f = rlc_count_lines(b, b->first, from);
+  int t = rlc_count_lines(b, b->first, to);
+  int l = rlc_count_lines(b, b->first, line);
+
+  if ( l < f )
+    return line;
+  if ( l <= t )
+    return ANCHOR_NONE;
+
+  return rlc_add_lines(b, line, -n);
+}
+
+
+/** One mark of a block, moved with the text it named.  A mark inside the
+ * range goes to the start of the line the gap closed on: that is where
+ * what it pointed at used to be and where its neighbour now is.
+ */
+
+static void
+rlc_mark_after_removal(RlcData b, int from, int to, int n,
+		       int *line, int *chr)
+{ int l;
+
+  if ( *line == ANCHOR_NONE )
+    return;
+
+  if ( (l=rlc_position_after_removal(b, from, to, n, *line)) == ANCHOR_NONE )
+  { *line = from;
+    *chr  = 0;
+  } else
+    *line = l;
+}
+
+
+/** Take the lines `from'..`to' out of the ring.  Only the lines: what
+ * names them is the caller's to put right.
+ */
+
+static void
+rlc_delete_lines(RlcData b, int from, int to)
+{ int n     = rlc_count_lines(b, from, to) + 1;
+  int below = rlc_count_lines(b, to, b->last);
+  int dst   = from;
+  int src   = NextLine(b, to);
+
+  for(int i=0; i<n; i++)		/* the text that is going */
+    rlc_free_line(b, rlc_add_lines(b, from, i));
+
+  for(int i=0; i<below; i++)		/* what was under it comes up */
+  { b->lines[dst] = b->lines[src];
+    b->lines[dst].line_no  = dst;
+    b->lines[dst].changed |= CHG_CHANGED;
+    dst = NextLine(b, dst);
+    src = NextLine(b, src);
+  }
+
+  for(int i=0; i<n; i++)		/* and the end falls off */
+  { rlc_reinit_line(b, dst);
+    dst = NextLine(b, dst);
+  }
+
+  b->last = rlc_add_lines(b, b->last, -n);
+  b->changed |= CHG_CHANGED|CHG_CLEAR|CHG_CARET;
+}
+
+
+static status
+removeTerminalBlock(TerminalBlock tb)
+{ RlcData b = block_data(tb);
+  TerminalImage ti;
+  Chain blocks;
+  Cell cl;
+  int from, to, n;
+
+  if ( !b || rlc_alt_screen(b) )	/* the application owns the window */
+    fail;
+  if ( !rlc_block_lines(b, tb, &from, &to) )
+    fail;
+
+  n = rlc_count_lines(b, from, to) + 1;
+
+  /* The line the client is writing on, and the one the caret is on, are
+   * not ours to take away.
+   */
+  if ( rlc_position_after_removal(b, from, to, n, b->last)   == ANCHOR_NONE ||
+       rlc_position_after_removal(b, from, to, n, b->caret_y) == ANCHOR_NONE )
+    fail;
+
+  ti = tb->terminal;
+  if ( rlc_isearching(b) )		/* it may be looking at what goes */
+    endIsearchTerminalImage(ti, OFF);
+  rlc_set_selection(b, 0, 0, 0, 0);
+
+  bool at_end = rlc_view_count(b, b->window_start, b->last) < b->window_size;
+
+  rlc_delete_lines(b, from, to);
+
+  b->caret_y = rlc_position_after_removal(b, from, to, n, b->caret_y);
+  b->input_line = rlc_position_after_removal(b, from, to, n, b->input_line);
+  if ( b->input_line == ANCHOR_NONE )
+    b->input_active = false;
+
+  int ws = rlc_position_after_removal(b, from, to, n, b->window_start);
+  b->window_start = ws == ANCHOR_NONE ? from : ws;
+
+  blocks = ti->blocks;
+  for_cell(cl, blocks)
+  { TerminalBlock t2 = cl->value;
+    RlcAnchors a = t2->anchors;
+
+    if ( !a || t2 == tb )
+      continue;
+    /* A mark inside the range goes to where the gap closed rather than
+     * being let go of.  The one that lands there is the `D' of the
+     * command before this one, which the client wrote on the line this
+     * one's prompt went on: its output now ends where the text that came
+     * up to fill the gap begins.
+     */
+    rlc_mark_after_removal(b, from, to, n, &a->prompt_line, &a->prompt_char);
+    rlc_mark_after_removal(b, from, to, n, &a->input_line,  &a->input_char);
+    rlc_mark_after_removal(b, from, to, n, &a->output_line, &a->output_char);
+    rlc_mark_after_removal(b, from, to, n, &a->end_line,    &a->end_char);
+  }
+
+  assign(tb, terminal, NIL);
+  deleteChain(blocks, tb);
+
+  rlc_restamp_folds(b);
+  rlc_keep_end_in_view(b, at_end);	/* it was showing the end; still is */
+  rlc_request_redraw(b);
+
+  succeed;
 }
 
 
@@ -3103,7 +3306,9 @@ static senddecl send_terminal_block[] =
   SM(NAME_unfold, 0, NULL, unfoldTerminalBlock,
      NAME_appearance, "Show the output of this block"),
   SM(NAME_toggleFold, 0, NULL, toggleFoldTerminalBlock,
-     NAME_appearance, "Hide the output if it is shown and back")
+     NAME_appearance, "Hide the output if it is shown and back"),
+  SM(NAME_remove, 0, NULL, removeTerminalBlock,
+     NAME_edit, "Take this command out of the buffer")
 };
 
 static getdecl get_terminal_block[] =
@@ -6792,9 +6997,6 @@ rlc_restamp_folds(RlcData b)
 { TerminalImage ti = b->object;
   Cell cl;
   int folds = 0;
-  /* Asked before the bits are rewritten, so it is of the window as it
-   * stands: is the end of the buffer on it? */
-  bool at_end = rlc_view_count(b, b->window_start, b->last) < b->window_size;
 
   for(int l=0; l<b->height; l++)
   { if ( b->lines[l].folded || b->lines[l].fold_head )
@@ -6839,20 +7041,35 @@ rlc_restamp_folds(RlcData b)
 
   b->folds = folds;
 
-  /* Closing a fold takes rows out of the window and everything under it
-   * moves up.  A window that was showing the end of the buffer has to go
-   * on showing it, or the last line walks off the bottom row and leaves
-   * the blank rest of the buffer behind it.  Opening one is the same the
-   * other way about.
-   */
-  if ( at_end )
-  { if ( rlc_view_count(b, b->first, b->last) >= b->window_size )
-      b->window_start = rlc_view_add(b, b->last, -(b->window_size-1));
-    else
-      b->window_start = b->first;
-  }
-
   /* The window must start on a line it can show. */
+  while ( rlc_folded(b, b->window_start) && b->window_start != b->first )
+    b->window_start = PrevLine(b, b->window_start);
+}
+
+
+/** Keep the end of the buffer on the bottom row.  Closing a fold takes
+ * rows out of the window and everything under it moves up, so a window
+ * that was showing that end has to go on showing it, or the last line
+ * walks off the bottom and leaves the blank rest of the buffer behind
+ * it; opening one is the same the other way about.
+ *
+ * `at_end' says whether the window was showing the end, and has to be
+ * asked before the fold bits are rewritten.  Only a change the user made
+ * to the folds wants this: erasing the display or dropping blocks
+ * rewrites the bits too, and there the window is the caller's own to
+ * place.
+ */
+
+static void
+rlc_keep_end_in_view(RlcData b, bool at_end)
+{ if ( !at_end )
+    return;
+
+  if ( rlc_view_count(b, b->first, b->last) >= b->window_size )
+    b->window_start = rlc_view_add(b, b->last, -(b->window_size-1));
+  else
+    b->window_start = b->first;
+
   while ( rlc_folded(b, b->window_start) && b->window_start != b->first )
     b->window_start = PrevLine(b, b->window_start);
 }
@@ -7495,6 +7712,8 @@ rlc_erase_display(RlcData b)
 					 * banner of the session came
 					 * back with the next prompt
 					 * written over it. */
+  rlc_sweep_blocks(b);			/* the marks on the lines it erased
+					   have nothing left to name */
 
   b->changed |= CHG_CHANGED|CHG_CLEAR|CHG_CARET;
 
