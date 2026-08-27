@@ -267,7 +267,12 @@ setup_theme :-
     ->  true
     ;   print_message(warning, error(existence_error(theme, Theme),_))
     ).
+setup_theme :-
+    current_prolog_flag(epilog, true),
+    !,
+    use_module(library(theme/light)).
 setup_theme.
+
 
 %!  init_pce
 %
