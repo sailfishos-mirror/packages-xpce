@@ -6207,6 +6207,105 @@ test(a_continued_command_folds_from_its_first_line,
     assertion(marker_on_screen(T, 'format("fold-~w~n", [QY])).')),
     assertion(send(Block, unfold)).
 
+test(fold_previous_is_declared_off) :-
+    %  What the class says, not what this machine's Defaults file says:
+    %  the mode is there to be turned on, and a user who has done so must
+    %  not make the suite fail.
+    get(class(prolog_terminal), class_variable, fold_previous, CV),
+    assertion(get(CV, default, @off)).
+
+test(nothing_folds_with_the_mode_off,
+     [setup(tt_fold_previous(T, @off))]) :-
+    tt_marker_goal(fpda, G1, M1), run_goal(T, G1, M1),
+    tt_marker_goal(fpdb, G2, M2), run_goal(T, G2, M2),
+    assertion(marker_on_screen(T, M1)),
+    assertion(marker_on_screen(T, M2)).
+
+test(fold_previous_closes_the_command_before_this_one,
+     [setup(tt_fold_previous(T, @on)), cleanup(tt_fold_previous(_, @off))]) :-
+    tt_marker_goal(fpa, G1, M1), run_goal(T, G1, M1),
+    assertion(marker_on_screen(T, M1)),
+    tt_marker_goal(fpb, G2, M2), run_goal(T, G2, M2),
+    %  entering the second closed the first, and left its command
+    assertion(\+ marker_on_screen(T, M1)),
+    assertion(marker_on_screen(T, G1)),
+    assertion(marker_on_screen(T, M2)),
+    tt_marker_goal(fpc, G3, M3), run_goal(T, G3, M3),
+    assertion(\+ marker_on_screen(T, M2)),
+    assertion(marker_on_screen(T, M3)),
+    %  and nothing was taken out of the buffer
+    assertion(term_find(T, 0, M1, _)),
+    assertion(term_find(T, 0, M2, _)).
+
+test(fold_previous_leaves_a_screenful_scrolling,
+     [setup(tt_fold_previous(T, @on)), cleanup(tt_fold_previous(_, @off))]) :-
+    %  The fold happens while the client is writing: it closes the command
+    %  before as the new one is entered, and the new one then prints more
+    %  than the window holds.
+    tt_marker_goal(fpsa, G1, M1), run_goal(T, G1, M1),
+    T = terminal(_, xpce(_, TI)),
+    get(TI, rows, Rows),
+    Lines is Rows+10,
+    format(atom(Goal),
+           'forall(between(1,~w,QS), format("~~w-~~w~~n", [fpsb, QS])).',
+           [Lines]),
+    format(atom(Last), 'fpsb-~w', [Lines]),
+    run_goal(T, Goal, Last),
+    assertion(marker_on_screen(T, Last)),
+    assertion(\+ marker_on_screen(T, M1)),
+    Bottom is Rows-1,
+    get(TI, row, Bottom, S), get(S, value, A),
+    normalize_space(atom(BottomText), A),
+    assertion(sub_atom(BottomText, _, _, _, '?-')).
+
+test(fold_previous_folds_a_multiline_predecessor_not_itself,
+     [setup(tt_fold_previous(T, @on)), cleanup(tt_fold_previous(_, @off))]) :-
+    tt_marker_goal(fpma, G1, M1), run_goal(T, G1, M1),
+    tt_type_lines(T, ['forall(between(1,2,QM),',
+                      '  format("~w-~w~n", [fpmb, QM])).']),
+    assertion(wait_until(marker_on_screen(T, 'fpmb-2'), 15)),
+    assertion(wait_for_prompt(T)),
+    assertion(\+ marker_on_screen(T, M1)),
+    assertion(marker_on_screen(T, 'fpmb-1')),     % its own output stays
+    finished_blocks(T, Blocks),
+    last(Blocks, Own),
+    assertion(get(Own, folded, @off)).
+
+test(fold_previous_leaves_a_command_unfolded_by_hand,
+     [setup(tt_fold_previous(T, @on)), cleanup(tt_fold_previous(_, @off))]) :-
+    tt_marker_goal(fpua, G1, M1), run_goal(T, G1, M1),
+    tt_marker_goal(fpub, G2, M2), run_goal(T, G2, M2),
+    finished_blocks(T, Blocks),
+    tt_block_of(Blocks, M1, One),
+    assertion(get(One, folded, @on)),
+    send(One, unfold),
+    assertion(marker_on_screen(T, M1)),
+    tt_marker_goal(fpuc, G3, M3), run_goal(T, G3, M3),
+    %  only the one before the new command closes; the reopened one stays
+    assertion(\+ marker_on_screen(T, M2)),
+    assertion(get(One, folded, @off)),
+    assertion(marker_on_screen(T, M1)).
+
+%!  tt_marker_goal(+Tag, -Goal, -Marker) is det.
+%
+%   A goal that prints Marker without containing it, so that finding
+%   Marker on the screen means the output is there and not merely the
+%   command that produced it.
+
+tt_marker_goal(Tag, Goal, Marker) :-
+    format(atom(Goal),  'format("~~w-~~w~~n", [~w, x]).', [Tag]),
+    format(atom(Marker), '~w-x', [Tag]).
+
+%!  tt_fold_previous(-T, +Bool) is det.
+%
+%   Test setup: the terminal with the mode set.  Used for cleanup too,
+%   where the terminal itself is not wanted.
+
+tt_fold_previous(T, Bool) :-
+    test_begin(T),
+    T = terminal(_, xpce(_, TI)),
+    send(TI, fold_previous, Bool).
+
 test(remove_takes_a_command_out_and_the_terminal_goes_on,
      [setup(test_begin(T))]) :-
     %  The one that matters: after the lines have gone from under it, the

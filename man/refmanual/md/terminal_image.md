@@ -159,7 +159,9 @@ keystrokes and hovered hyperlinks.
 
 - terminal_image->scroll_vertical: direction={forwards,backwards,goto}, unit={file,page,line}, amount=int
     Scroll request from the associated scroll_bar (also bound to
-    keyboard navigation).
+    keyboard navigation).  Stops where the last line of the buffer is on
+    the bottom row: there is nothing under it to show, so going further
+    would only walk the text off the top.
 
 - terminal_image->event: event
     Top-level event dispatcher.
@@ -190,6 +192,21 @@ keystrokes and hovered hyperlinks.
 
 - terminal_image->paste: which=[{primary,clipboard}]
     Paste the contents of the primary selection or clipboard.
+
+- terminal_image->prompt_mark: kind={prompt,input,output,end}, continuation=[bool]
+    Called on OSC 133, the semantic prompt marks: `A`, `B`, `C` and `D`
+    decoded to where a prompt starts, where the line the user edits
+    starts, where that line was entered and its output begins, and where
+    the output ends.  `continuation` is the `k=s` of a secondary prompt,
+    i.e. the client is collecting another line of an input it has not
+    finished.  The default implementation is what builds `<-blocks`.
+
+    A subclass may refine this to act on what its client is doing; class
+    `prolog_terminal` does, to fold the command before the one being
+    entered.  A refinement **must not write to the terminal or destroy
+    it**: the escape sequence it arrived in is still being parsed, and
+    output of its own would move the very lines and blocks that parse is
+    holding.
 
 - terminal_image->fold_all
 - terminal_image->unfold_all

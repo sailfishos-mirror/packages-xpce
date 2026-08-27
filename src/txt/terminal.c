@@ -360,6 +360,8 @@ static const uchar_t *rlc_clicked_link(RlcData b, int x, int y);
 static const uchar_t *rlc_over_link(RlcData b, int x, int y);
 static href    *rlc_href_at(RlcData b, int x, int y, int *l, int *c);
 static status	refreshTerminalImage(TerminalImage ti);
+static status	promptMarkTerminalImage(TerminalImage ti, Name kind,
+					BoolObj continuation);
 static status	endIsearchTerminalImage(TerminalImage ti, BoolObj keep);
 static status	executeIsearchTerminalImage(TerminalImage ti, Int chr,
 					    bool repeat);
@@ -411,6 +413,8 @@ static void	rlc_sweep_blocks(RlcData b);
 static TerminalBlock rlc_last_block(RlcData b);
 static void	rlc_restamp_folds(RlcData b);
 static void	rlc_keep_end_in_view(RlcData b, bool at_end);
+static int	rlc_last_window_start(RlcData b);
+static int	rlc_clamp_window_start(RlcData b, int here);
 static bool	rlc_fold_lines(RlcData b, TerminalBlock tb,
 			       int *headp, int *fromp, int *top);
 static TerminalBlock rlc_fold_head_block(RlcData b, int line);
@@ -629,7 +633,8 @@ scrollVerticalTerminalImage(TerminalImage ti,
   if ( unit == NAME_file )
   { int lines = rlc_view_count(b, b->first, b->last);
     int start = lines*valInt(amount)/1000;
-    b->window_start = rlc_view_add(b, b->first, start);
+    b->window_start = rlc_clamp_window_start(b,
+			  rlc_view_add(b, b->first, start));
     b->changed |= CHG_CARET|CHG_CLEAR|CHG_CHANGED;
     rlc_request_redraw(b);
   } else if ( unit == NAME_line )
@@ -2695,7 +2700,7 @@ printTerminalImage(TerminalImage ti, Int start, Int count)
 /* A terminal_block is what the OSC 133 marks of one command add up to:
  * the prompt (`A'), the line the user edited (`B'), the output of
  * running it (`C') and the end of that output (`D', or the prompt after
- * it).  osc133_mark() builds them; they hang in <-blocks of the terminal
+ * it).  ->prompt_mark builds them; they hang in <-blocks of the terminal
  * in the order they were made.
  *
  * A block outlives the marks it was made from but not the text it points
@@ -3487,6 +3492,8 @@ static char *T_font[] =
 { "font=font", "bold=[font]", "italic=[font]", "bold_italic=[font]" };
 static char *T_workingDirectory[] =
 { "directory=name*", "host=name*" };
+static char *T_promptMark[] =
+{ "kind={prompt,input,output,end}", "continuation=[bool]" };
 static char *T_print[] =
 { "start=[int]", "count=[int]" };
 static char *T_find[] =
@@ -3641,6 +3648,8 @@ static senddecl send_terminal_image[] =
   SM(NAME_workingDirectory, 2, T_workingDirectory,
      workingDirectoryTerminalImage,
      NAME_process, "Called on OSC 7 or OSC 9;9 <directory>"),
+  SM(NAME_promptMark, 2, T_promptMark, promptMarkTerminalImage,
+     NAME_process, "Called on OSC 133 <semantic prompt mark>"),
 #ifdef __WINDOWS__
   SM(NAME_launch, 1, "char_array", launchTerminalImage,
      NAME_process, "Run process in the terminal"),
@@ -5105,7 +5114,8 @@ rlc_scroll_lines(RlcData b, int lines)
 { if ( lines == 0 )
     return;
 
-  b->window_start = rlc_view_add(b, b->window_start, lines);
+  b->window_start = rlc_clamp_window_start(b,
+			rlc_view_add(b, b->window_start, lines));
 
   b->changed |= CHG_CARET|CHG_CLEAR|CHG_CHANGED;
   rlc_request_redraw(b);
@@ -7060,18 +7070,48 @@ rlc_restamp_folds(RlcData b)
  * place.
  */
 
+/** The line the window may start on at the furthest it can be scrolled:
+ * the one that puts the end of the buffer on the bottom row.  There is
+ * nothing under the last line to show, so scrolling past this only walks
+ * the text off the top and ends with an empty window.
+ */
+
+static int
+rlc_last_window_start(RlcData b)
+{ int start;
+
+  if ( rlc_view_count(b, b->first, b->last) < b->window_size )
+    start = b->first;			/* it all fits */
+  else
+    start = rlc_view_add(b, b->last, -(b->window_size-1));
+
+  while ( rlc_folded(b, start) && start != b->first )
+    start = PrevLine(b, start);
+
+  return start;
+}
+
+
+/** Do not scroll further than that.  Fewer lines than the window holds
+ * are all of them, so `here' is only ever pulled back.
+ */
+
+static int
+rlc_clamp_window_start(RlcData b, int here)
+{ int last = rlc_last_window_start(b);
+
+  if ( rlc_view_count(b, b->first, here) >
+       rlc_view_count(b, b->first, last) )
+    return last;
+
+  return here;
+}
+
+
 static void
 rlc_keep_end_in_view(RlcData b, bool at_end)
-{ if ( !at_end )
-    return;
-
-  if ( rlc_view_count(b, b->first, b->last) >= b->window_size )
-    b->window_start = rlc_view_add(b, b->last, -(b->window_size-1));
-  else
-    b->window_start = b->first;
-
-  while ( rlc_folded(b, b->window_start) && b->window_start != b->first )
-    b->window_start = PrevLine(b, b->window_start);
+{ if ( at_end )
+    b->window_start = rlc_last_window_start(b);
 }
 
 
@@ -8987,7 +9027,7 @@ osc133_open_block(RlcData b)
 /** The value of a `k=' parameter of a mark, or 0.  Everything after the
  * mark letter is a list of key=value parameters; `k' says what kind of
  * prompt an `A' is, `s' for the secondary prompt of an input the client
- * is still collecting.  See osc133_mark().
+ * is still collecting.  See ->prompt_mark.
  */
 
 static int
@@ -9001,89 +9041,106 @@ osc133_kind(const uchar_t *param)
 }
 
 
-static void
-osc133_mark(RlcData b, const uchar_t *param)
-{ TerminalBlock tb = rlc_last_block(b);
-  RlcAnchors a = tb ? tb->anchors : NULL;
+/** What a client says with an OSC 133 mark, and what the terminal makes of
+ * it: where a prompt starts (`prompt'), where the line the user edits
+ * starts (`input'), where that line was entered and its output begins
+ * (`output'), and where the output ends (`end').  `continuation' is the
+ * `k=s' of a secondary prompt, i.e. the client is asking for another line
+ * of an input it has not finished collecting.
+ *
+ * A subclass may refine this to act on what its client is doing -- see
+ * class prolog_terminal, which folds the command before the one being
+ * entered.  A refinement must not write to the terminal or destroy it:
+ * the escape sequence this arrived in is still being parsed, and output
+ * of its own would move the very lines and blocks that parse is holding.
+ */
+
+static status
+promptMarkTerminalImage(TerminalImage ti, Name kind, BoolObj continuation)
+{ RlcData b = ti->data;
+  TerminalBlock tb;
+  RlcAnchors a;
+
+  if ( !b )
+    fail;
+  tb = rlc_last_block(b);
+  a  = tb ? tb->anchors : NULL;
 
   b->prompt_marks = true;
 
-  switch(param[0])
-  { case 'A':				/* a prompt, so not yet */
-      b->input_active = false;
-      if ( a && osc133_kind(param) == 's' )
-      {	/* A secondary prompt: the client is asking for another line of
-	 * an input it has not finished collecting, which is one command
-	 * to whoever is typing it.  The block stays open, and with it
-	 * the prompt of the line the command started on, which is where
-	 * its marker belongs.
-	 *
-	 * If nothing was printed between the last two marks there is no
-	 * output yet, only a line of the command; let go of it so that
-	 * the `C' after this prompt anchors the real output.  If
-	 * something was printed, this is a read from inside a command
-	 * that is running, and its output stands.
-	 */
-	a->continued = true;
-	if ( a->output_line != ANCHOR_NONE &&
-	     a->output_line == a->end_line && a->output_char == a->end_char )
-	{ a->output_line = a->output_char = ANCHOR_NONE;
-	  a->end_line    = a->end_char    = ANCHOR_NONE;
-	  assign(tb, running, OFF);
-	}
-	break;
+  if ( kind == NAME_prompt )
+  { b->input_active = false;
+    if ( a && isOn(continuation) )
+    { /* A secondary prompt: the client is asking for another line of
+       * an input it has not finished collecting, which is one command
+       * to whoever is typing it.  The block stays open, and with it the
+       * prompt of the line the command started on, which is where its
+       * marker belongs.
+       *
+       * If nothing was printed between the last two marks there is no
+       * output yet, only a line of the command; let go of it so that
+       * the `output' after this prompt anchors the real output.  If
+       * something was printed, this is a read from inside a command
+       * that is running, and its output stands.
+       */
+      a->continued = true;
+      if ( a->output_line != ANCHOR_NONE &&
+	   a->output_line == a->end_line && a->output_char == a->end_char )
+      { a->output_line = a->output_char = ANCHOR_NONE;
+	a->end_line    = a->end_char    = ANCHOR_NONE;
+	assign(tb, running, OFF);
       }
-      if ( !a || a->output_line != ANCHOR_NONE )
-      {	if ( a && a->end_line == ANCHOR_NONE )
-	{ a->end_line = b->caret_y;	/* a client that marks no `D' ends */
-	  a->end_char = b->caret_x;	/* its output where the next one starts */
-	  assign(tb, running, OFF);
-	  rlc_restamp_folds(b);		/* it can be folded now */
-	}
-	osc133_open_block(b);
-	if ( !(tb=rlc_last_block(b)) )
-	  return;
-	a = tb->anchors;
-      }
-      a->prompt_line = b->caret_y;	/* the same prompt, drawn again */
-      a->prompt_char = b->caret_x;
-      break;
-    case 'B':				/* the input starts here */
-      b->input_active = true;
-      b->input_line   = b->caret_y;
-      b->input_char   = b->caret_x;
-      if ( !a )				/* a read that marked no prompt */
-      { osc133_open_block(b);
-	if ( !(tb=rlc_last_block(b)) )
-	  return;
-	a = tb->anchors;
-      }
-      if ( !a->continued )		/* the command starts on its first */
-      { a->input_line = b->caret_y;	/* line, not on the one being added */
-	a->input_char = b->caret_x;
-      } else if ( a->cont_char == ANCHOR_NONE )
-      { a->cont_char = b->caret_x;	/* where its later lines start, past
-					   the continuation prompt */
-      }
-      break;
-    case 'C':				/* the line was entered */
-      b->input_active = false;
-      if ( a && a->output_line == ANCHOR_NONE )
-      { a->output_line = b->caret_y;
-	a->output_char = b->caret_x;
-	assign(tb, running, ON);
-      }
-      break;
-    case 'D':				/* and its output is over */
-      b->input_active = false;
-      if ( a && a->output_line != ANCHOR_NONE )
-      { a->end_line = b->caret_y;
-	a->end_char = b->caret_x;
+      succeed;
+    }
+    if ( !a || a->output_line != ANCHOR_NONE )
+    { if ( a && a->end_line == ANCHOR_NONE )
+      { a->end_line = b->caret_y;	/* a client that marks no `D' ends */
+	a->end_char = b->caret_x;	/* its output where the next one starts */
 	assign(tb, running, OFF);
 	rlc_restamp_folds(b);		/* it can be folded now */
       }
-      break;
+      osc133_open_block(b);
+      if ( !(tb=rlc_last_block(b)) )
+	succeed;
+      a = tb->anchors;
+    }
+    a->prompt_line = b->caret_y;	/* the same prompt, drawn again */
+    a->prompt_char = b->caret_x;
+  } else if ( kind == NAME_input )
+  { b->input_active = true;
+    b->input_line   = b->caret_y;
+    b->input_char   = b->caret_x;
+    if ( !a )				/* a read that marked no prompt */
+    { osc133_open_block(b);
+      if ( !(tb=rlc_last_block(b)) )
+	succeed;
+      a = tb->anchors;
+    }
+    if ( !a->continued )		/* the command starts on its first */
+    { a->input_line = b->caret_y;	/* line, not on the one being added */
+      a->input_char = b->caret_x;
+    } else if ( a->cont_char == ANCHOR_NONE )
+    { a->cont_char = b->caret_x;	/* where its later lines start, past
+					   the continuation prompt */
+    }
+  } else if ( kind == NAME_output )	/* the line was entered */
+  { b->input_active = false;
+    if ( a && a->output_line == ANCHOR_NONE )
+    { a->output_line = b->caret_y;
+      a->output_char = b->caret_x;
+      assign(tb, running, ON);
+    }
+  } else				/* NAME_end: its output is over */
+  { b->input_active = false;
+    if ( a && a->output_line != ANCHOR_NONE )
+    { a->end_line = b->caret_y;
+      a->end_char = b->caret_x;
+      assign(tb, running, OFF);
+      rlc_restamp_folds(b);		/* it can be folded now */
+    }
   }
+
+  succeed;
 }
 
 
@@ -9160,8 +9217,19 @@ osc_command(RlcData b, int param, const uchar_t *link)
       break;
     }
     case 133:			/* semantic prompt marks */
-      osc133_mark(b, link);
+    { Name kind = NULL;
+
+      switch(link[0])
+      { case 'A': kind = NAME_prompt; break;
+	case 'B': kind = NAME_input;  break;
+	case 'C': kind = NAME_output; break;
+	case 'D': kind = NAME_end;    break;
+      }
+      if ( kind )
+	send(b->object, NAME_promptMark, kind,
+	     osc133_kind(link) == 's' ? ON : OFF, EAV);
       break;
+    }
     default:
       DEBUG(NAME_term, Cprintf("Unknown OSC command: %d\n", param));
   }

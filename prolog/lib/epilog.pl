@@ -470,11 +470,15 @@ variable(block_popup,   popup*,               get,  "Popup for a block marker").
 variable(block_gesture, popup_gesture*,       none, "Gesture to show that").
 variable(history,       {on,off,copy} := off, none, "Support history").
 variable(save_history,  bool := @off,         none, "Save history on exit").
+variable(fold_previous, bool,                 both,
+         "Fold the previous command when one is entered").
 variable(current_link,	name*,                get,  "Link under popup").
 variable(current_block,	terminal_block*,      get,  "Block under popup").
 
 class_variable(inject_tries, int, [windows(5), unix(20)],
                "Times to look for a reader of inject(Spec) text").
+class_variable(fold_previous, bool, @off,
+               "Fold the output of the previous command when one is entered").
 
 %!  binding(?Key, ?Method)
 %
@@ -730,6 +734,19 @@ consult_link(PT) :->
     send(PT, inject, consult(File)).
 
 :- pce_group(blocks).
+
+prompt_mark(PT, Kind:{prompt,input,output,end}, Cont:[bool]) :->
+    "Fold the command before this one when one is entered"::
+    send_super(PT, prompt_mark, Kind, Cont),
+    (   Kind == output,                 % the line was entered
+        get(PT, fold_previous, @on),
+        get(PT, blocks, Blocks),
+        get(Blocks, tail, Current),
+        get(Blocks, previous, Current, Previous)
+    ->  ignore(send(Previous, fold))
+    ;   true
+    ).
+
 
 %       The OSC 133 marks of the commandline editor divide the window
 %       into blocks: a prompt, the line the user entered and the output

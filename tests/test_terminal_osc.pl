@@ -353,6 +353,47 @@ test(output, [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
     assertion(O1 == 'out1-1\nout1-2\nout1-3\n'),
     assertion(O2 == 'out2-1\nout2-2\nout2-3\n').
 
+test(the_marks_are_a_method_that_can_be_sent,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    %  osc_command() decodes the letter and the `k=' parameter and sends
+    %  ->prompt_mark, so the state machine can be driven without any
+    %  escape sequences at all -- and a subclass can refine it.
+    send(TI, prompt_mark, prompt),
+    send(TI, insert, '?- '),
+    send(TI, prompt_mark, input),
+    send(TI, insert, 'sent.\r\n'),
+    send(TI, prompt_mark, output),
+    send(TI, insert, 'out-a\r\nout-b\r\n'),
+    send(TI, prompt_mark, end),
+    blocks(TI, [B1]),
+    get(B1, content, command, S1), text(S1, Cmd),
+    get(B1, content, output, S2), text(S2, Out),
+    assertion(Cmd == 'sent.'),
+    assertion(Out == 'out-a\nout-b\n'),
+    assertion(get(B1, running, @off)),
+    assertion(send(B1, fold)).
+
+test(a_sent_continuation_keeps_one_block,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    send(TI, prompt_mark, prompt),
+    send(TI, insert, '?- '),
+    send(TI, prompt_mark, input),
+    send(TI, insert, 'first(\r\n'),
+    send(TI, prompt_mark, output),
+    send(TI, prompt_mark, end),
+    send(TI, prompt_mark, prompt, @on),   % a secondary prompt
+    send(TI, insert, '|  '),
+    send(TI, prompt_mark, input),
+    send(TI, insert, 'second).\r\n'),
+    send(TI, prompt_mark, output),
+    send(TI, insert, 'out-c\r\n'),
+    send(TI, prompt_mark, end),
+    blocks(TI, Blocks),
+    assertion(length(Blocks, 1)),
+    Blocks = [B1|_],
+    get(B1, content, command, S), text(S, Cmd),
+    assertion(Cmd == 'first(\nsecond).').
+
 test(erasing_the_display_lets_go_of_what_it_erased,
      [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
     %  ED 2 destroys the lines a block was made of.  A mark that was
@@ -577,6 +618,40 @@ test(folding_keeps_the_end_on_the_bottom_row,
     assertion(row_text(TI, Bottom, '?-')),
     send(Last, unfold),
     assertion(row_text(TI, Bottom, '?-')).
+
+test(scrolling_to_the_end_stops_at_the_end,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    %  There is nothing under the last line to show, so scrolling past it
+    %  only walks the text off the top; far enough and the window is
+    %  empty.  Every way of asking must stop at the same place.
+    fill_window(TI, _),
+    screen(TI, AtEnd),
+    assertion(AtEnd \== []),
+    forall(member(Ask, [ scroll_vertical(forwards, page, 10000),
+                         scroll_vertical(forwards, line, 10000),
+                         scroll_vertical(goto, file, 1000)
+                       ]),
+           ( Ask =.. [Sel|Args],
+             Msg =.. [send, TI, Sel|Args],
+             call(Msg),
+             screen(TI, Rows),
+             assertion(Rows == AtEnd)
+           )).
+
+test(scrolling_to_the_end_stops_at_the_end_with_a_fold,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    fill_window(TI, Blocks),
+    Blocks = [B1|_],
+    send(B1, fold),
+    screen(TI, AtEnd),
+    send(TI, scroll_vertical, forwards, page, 10000),
+    assertion(screen_is(TI, AtEnd)),
+    send(TI, scroll_vertical, goto, file, 1000),
+    assertion(screen_is(TI, AtEnd)).
+
+screen_is(TI, Rows) :-
+    screen(TI, Now),
+    Now == Rows.
 
 test(folding_while_scrolled_back_leaves_the_view_alone,
      [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
