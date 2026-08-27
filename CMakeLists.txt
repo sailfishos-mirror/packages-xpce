@@ -105,7 +105,12 @@ endif()
 # build host happens to have a window server.
 set(XPCE_TEST_ENV "SDL_VIDEODRIVER=dummy")
 
-test_libs(xpce)
+# And it must not read the Defaults file of whoever is running the tests:
+# a preference of theirs is not a reason for the suite to fail.  See the
+# `xpce_defaults' flag.
+set(XPCE_TEST_OPTIONS -Dxpce_defaults=none)
+
+test_libs(xpce OPTIONS ${XPCE_TEST_OPTIONS})
 set_tests_properties(xpce:xpce PROPERTIES ENVIRONMENT "${XPCE_TEST_ENV}")
 add_subdirectory(tests)
 

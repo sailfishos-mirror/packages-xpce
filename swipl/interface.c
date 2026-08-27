@@ -168,7 +168,8 @@ static PceObject	termToObject(term_t t, PceType type,
 static prolog_call_data *get_pcd(PceObject method);
 static int		put_object(term_t t, PceObject obj);
 static int		put_trace_info(term_t id, prolog_call_data *pm);
-       foreign_t	pl_pce_init(term_t home, term_t appdir);
+       foreign_t	pl_pce_init(term_t home, term_t appdir,
+				    term_t userdefaults);
 static Module		pceContextModule(void);
 static void		makeClassProlog(void);
 static term_t		getTermHandle(PceObject hd);
@@ -622,7 +623,7 @@ install_pl2xpce(void)
 
   PL_register_blob_type(&pce_blob);	/* so that the type exists as soon */
 					/* as the library is loaded */
-  PL_register_foreign("pce_init", 2,
+  PL_register_foreign("pce_init", 3,
 		      pl_pce_init, PL_FA_TRANSPARENT);
   PL_register_foreign("send", 2,
 		      pl_send, PL_FA_TRANSPARENT);
@@ -3701,11 +3702,11 @@ detach_thread(void *closure)
 
 
 foreign_t
-pl_pce_init(term_t Home, term_t AppDir)
+pl_pce_init(term_t Home, term_t AppDir, term_t UserDefaults)
 { char **argv;
   int argc;
-  const char *home, *appdata;
-  atom_t ahome, aappdata;
+  const char *home, *appdata, *userdefaults;
+  atom_t ahome, aappdata, audefaults;
   static int initialised = FALSE;
 
   if ( GetAtom(Home, &ahome) )
@@ -3716,6 +3717,12 @@ pl_pce_init(term_t Home, term_t AppDir)
     appdata = AtomCharp(aappdata);
   else
     appdata = NULL;
+  /* The file of defaults belonging to whoever is running us, or the
+     empty atom to read none.  See the `xpce_defaults' flag. */
+  if ( GetAtom(UserDefaults, &audefaults) )
+    userdefaults = AtomCharp(audefaults);
+  else
+    userdefaults = NULL;
 
   argc = PROLOG_ARGC();
   argv = PROLOG_ARGV();
@@ -3745,6 +3752,16 @@ pl_pce_init(term_t Home, term_t AppDir)
     initPrologConstants();		/* Public prolog constants */
     initHostConstants();		/* Host-specific Prolog constants */
     registerProfiler();			/* hook the profilers */
+
+    if ( userdefaults )
+    { PceObject ud = ( userdefaults[0]
+		       ? cToPceStringA(NIL, userdefaults,
+				       strlen(userdefaults), FALSE)
+		       : NIL );
+
+      pceSend(cToPceAssoc("pce"), NULL,
+	      cToPceName("user_defaults"), 1, &ud);
+    }
 
     plname = cToPceName("prolog");
     pceSend(PROLOG, NULL, cToPceName("name_reference"), 1, &plname);

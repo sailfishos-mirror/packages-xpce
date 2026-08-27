@@ -1,13 +1,13 @@
 ################
 # Additional xpce tests (plunit-based, standalone modules)
 
-test_libs(colour)
-test_libs(no_display)
-test_libs(number_conversion)
-test_libs(object_reference)
-test_libs(terminal_osc)
-test_libs(terminal_bce)
-test_libs(terminal_palette)
+test_libs(colour               OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(no_display           OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(number_conversion    OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(object_reference     OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(terminal_osc         OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(terminal_bce         OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(terminal_palette     OPTIONS ${XPCE_TEST_OPTIONS})
 
 set(XPCE_EXTRA_TESTS xpce:colour
                      xpce:no_display
@@ -62,6 +62,7 @@ function(add_terminal_tests prefix backend)
   foreach(unit ${TERMINAL_UNITS})
     add_test(NAME "${prefix}.${unit}"
              COMMAND ${PROG_SWIPL} -f none --no-packs
+                     ${XPCE_TEST_OPTIONS}
                      -s ${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.pl
                      -g "test_terminal(${backend},${unit})"
                      -t halt)
@@ -83,6 +84,7 @@ add_terminal_tests("xpce:terminal" "epilog")
 
 add_test(NAME "xpce:terminal_no_sigwinch.terminal_resize"
          COMMAND ${PROG_SWIPL} -f none --no-packs
+                 ${XPCE_TEST_OPTIONS}
                  -s ${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.pl
                  -g "test_terminal(epilog,terminal_resize)"
                  -t halt)

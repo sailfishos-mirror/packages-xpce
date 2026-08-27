@@ -34,6 +34,8 @@ font.system_fonts:	[ normal    := font(sans, normal, 12), \
 
 ! editor.exact_case:	@on
 
-! Finally, parse the user's defaults file.
-
-#include $PCEAPPDATA/Defaults
+! The per-user file, $PCEAPPDATA/Defaults, used to be pulled in here.
+! It is now read after this one by load_pce_defaults/0 in
+! boot/pce_principal.pl, so that a program can decline to read it with
+! the `xpce_defaults' Prolog flag.  It is still read last, so it still
+! wins over anything above.

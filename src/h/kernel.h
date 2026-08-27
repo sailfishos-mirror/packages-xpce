@@ -1206,6 +1206,7 @@ NewClass(pce)
 
   Name		home;			/* Home directory */
   SourceSink	defaults;		/* Location to load defaults from */
+  SourceSink	user_defaults;		/* ... and the user's, or @nil */
   Directory	application_data;	/* User application data */
 
   Name		version;		/* Version number of PCE */

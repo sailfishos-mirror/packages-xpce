@@ -212,7 +212,8 @@ init_pce :-
           )),
     pce_home(Home),
     xpce_application_dir(AppDir),
-    pce_init(Home, AppDir),
+    user_pce_defaults(UserDefaults),
+    pce_init(Home, AppDir, UserDefaults),
     !,
     create_prolog_flag(xpce, true, []),
     thread_self(Me),
@@ -220,6 +221,37 @@ init_pce :-
 init_pce :-
     print_message(error, error(pce_error(init_failed), _)),
     halt(1).
+
+%!  user_pce_defaults(-File) is det.
+%
+%   The file of class variable defaults belonging to whoever is running
+%   this, which XPCE reads after the one that ships with it and which
+%   therefore wins.  It is handed to pce_init/3 rather than loaded here:
+%   the defaults are read by the first lookup of a class variable,
+%   wherever in the program that happens to fall, which is long before
+%   send/3 is defined.
+%
+%   The `xpce_defaults` flag names another file to read in its place, or
+%   `none` to read none -- which is how a program says it is not to
+%   depend on the preferences of its user.  A test suite wants that, and
+%   so does an application that must look the same for everyone.  The
+%   file that ships with XPCE is read either way: it carries the font
+%   bindings, so a program without it would not merely lose preferences,
+%   it would look wrong.
+%
+%   The empty atom is what pce_init/3 reads as "none".
+
+user_pce_defaults(File) :-
+    (   current_prolog_flag(xpce_defaults, Spec)
+    ->  (   pce_no_defaults(Spec)
+        ->  File = ''
+        ;   File = Spec
+        )
+    ;   File = '$PCEAPPDATA/Defaults'
+    ).
+
+pce_no_defaults(none).
+pce_no_defaults(false).
 
 :- initialization(init_pce, now).
 
