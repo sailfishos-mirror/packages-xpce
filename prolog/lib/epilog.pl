@@ -54,7 +54,7 @@
 :- use_module(library(editline),
               [el_unwrap/1, el_history_events/2, el_add_history/2, el_wrap/1]).
 :- use_module(library(solution_sequences), [distinct/2]).
-:- use_module(library(lists), [reverse/2, member/2, memberchk/2]).
+:- use_module(library(lists), [reverse/2, member/2, memberchk/2, nth0/3]).
 :- use_module(library(option),
               [meta_options/3, option/3, option/2, merge_options/3,
                select_option/3]).
@@ -466,9 +466,12 @@ variable(process_cwd,   [name]*,              both, "Directory for processes").
 variable(inject_items,  prolog := '',         both, "Lines/goals to type when connected").
 variable(popup,         popup*,               get,  "Terminal popup").
 variable(popup_gesture, popup_gesture*,       none, "Gesture to show menu").
+variable(block_popup,   popup*,               get,  "Popup for a block marker").
+variable(block_gesture, popup_gesture*,       none, "Gesture to show that").
 variable(history,       {on,off,copy} := off, none, "Support history").
 variable(save_history,  bool := @off,         none, "Save history on exit").
 variable(current_link,	name*,                get,  "Link under popup").
+variable(current_block,	terminal_block*,      get,  "Block under popup").
 
 class_variable(inject_tries, int, [windows(5), unix(20)],
                "Times to look for a reader of inject(Spec) text").
@@ -493,6 +496,9 @@ binding('\\C-\\S-v', paste).
 binding('\\C-\\S-c', copy).
 binding('\\C--',     font_reduce).
 binding('\\C-=',     font_default).
+binding('\\C-\\S-h', toggle_fold).       % hide the output
+binding('\\C-\\S-<cursor_up>',   previous_prompt).
+binding('\\C-\\S-<cursor_down>', next_prompt).
 binding('<f5>',      trace_mode).
 binding('\\S-<f5>',  debug_mode).
 binding('\\C-<f5>',  gui_debug).
@@ -552,6 +558,13 @@ initialise(PT) :->
                 menu_item(consult_linked_file,
                           message(Terminal, consult_link),
                           end_group := @on),
+                menu_item(copy_command,
+                          message(Terminal, copy_block, command)),
+                menu_item(copy_output,
+                          message(Terminal, copy_block, output)),
+                menu_item(fold_output,
+                          message(Terminal, fold_block),
+                          end_group := @on),
                 menu_item(clear_screen,
                           message(Terminal, clear_screen),
                           end_group := @on),
@@ -568,7 +581,34 @@ initialise(PT) :->
                 menu_item(close,
                           message(Terminal, close))
               ]),
-    epilog_accelerators(P, KB).
+    epilog_accelerators(P, KB),
+    block_popup(PT, Terminal).
+
+%!  block_popup(+Terminal, +Receiver) is det.
+%
+%   The menu of the triangle in the margin, which is about the one
+%   command it stands beside rather than about the terminal.
+
+block_popup(PT, Terminal) :-
+    send(PT, block_popup, new(BP, epilog_popup)),
+    send(BP, update_message,
+         message(PT, update_block_popup, @receiver, @event)),
+    send_list(BP, append,
+              [ menu_item(fold_output,
+                          message(Terminal, fold_block),
+                          end_group := @on),
+                menu_item(copy_command,
+                          message(Terminal, copy_block, command)),
+                menu_item(copy_output,
+                          message(Terminal, copy_block, output)),
+                menu_item(copy_both,
+                          message(Terminal, copy_block, all)),
+                menu_item(select_output,
+                          message(Terminal, select_block, output),
+                          end_group := @on),
+                menu_item(repeat_command,
+                          message(Terminal, repeat_block))
+              ]).
 
 unlink(PT) :->
     catch(unlink_terminal_thread(PT), error(_,_), true),
@@ -667,6 +707,7 @@ connect(PT, TID:[name|int]) :->
 
 update_popup(PT, P:popup, Ev:event) :->
     "Update the popup"::
+    update_block_items(PT, P, Ev),
     get(P, member, consult_linked_file, Item),
     (   get(PT, link, Ev, Link),
         link_file_location(Link, File, _Location)
@@ -684,6 +725,136 @@ consult_link(PT) :->
     get(PT, current_link, Link),
     link_file_location(Link, File, _Location),
     send(PT, inject, consult(File)).
+
+:- pce_group(blocks).
+
+%       The OSC 133 marks of the commandline editor divide the window
+%       into blocks: a prompt, the line the user entered and the output
+%       it produced.  The terminal keeps them as `terminal_block`
+%       objects; what follows is the commands that act on the one the
+%       mouse or the caret is on.
+
+update_block_popup(PT, P:popup, Ev:event) :->
+    "Update the menu of a block marker"::
+    (   get(PT, fold_at, Ev, Block)
+    ->  send(PT, slot, current_block, Block)
+    ;   get(PT, current_block, Block),
+        Block \== @nil
+    ),
+    (   get(Block, folded, @on)
+    ->  send(P?members, for_all, message(@arg1, active, @on)),
+        set_label(P, fold_output, 'Show output')
+    ;   send(P?members, for_all, message(@arg1, active, @on)),
+        set_label(P, fold_output, 'Hide output')
+    ),
+    get(P, member, repeat_command, Repeat),
+    (   at_prompt(PT)
+    ->  send(Repeat, active, @on)
+    ;   send(Repeat, active, @off)   % typing would go to what is running
+    ).
+
+set_label(P, Name, Label) :-
+    get(P, member, Name, Item),
+    send(Item, label, Label).
+
+%!  at_prompt(+Terminal) is semidet.
+%
+%   True while the client is asking for a line rather than running
+%   something, which is when text sent to it is typed rather than fed to
+%   what it is doing.
+
+at_prompt(PT) :-
+    get(PT, blocks, Chain),
+    get(Chain, tail, Last),
+    Last \== @nil,
+    \+ get(Last, output, _).
+
+select_block(PT, What:[{command,output,all}]) :->
+    "Make the block the selection"::
+    get(PT, current_block, Block),
+    Block \== @nil,
+    send(Block, select, What).
+
+repeat_block(PT) :->
+    "Type the command of the block again"::
+    get(PT, current_block, Block),
+    Block \== @nil,
+    get(Block, content, command, String),
+    get(String, value, Text0),
+    Text0 \== '',
+    %  <-content hands over the command without the return that entered
+    %  it, so what arrives is typed and left for the user to enter.  The
+    %  lines of one collected over several do need their returns, and a
+    %  line the client reads ends the way a keyboard ends one.
+    atomic_list_concat(Lines, '\n', Text0),
+    atomic_list_concat(Lines, '\r', Text),
+    send(PT, send, Text).
+
+update_block_items(PT, P, Ev) :-
+    (   get(PT, block_at, Ev, Block)
+    ->  send(PT, slot, current_block, Block),
+        (   get(Block, folded, @on)
+        ->  Label = 'Show output'
+        ;   Label = 'Hide output'
+        ),
+        Active = @on
+    ;   send(PT, slot, current_block, @nil),
+        Label = 'Hide output',
+        Active = @off
+    ),
+    get(P, member, fold_output, Fold),
+    send(Fold, label, Label),
+    forall(member(Name, [copy_command, copy_output, fold_output]),
+           ( get(P, member, Name, Item),
+             send(Item, active, Active) )).
+
+copy_block(PT, What:[{command,output,all}]) :->
+    "Copy the command or its output to the clipboard"::
+    get(PT, current_block, Block),
+    Block \== @nil,
+    send(Block, copy, What, clipboard).
+
+fold_block(PT) :->
+    "Hide the output of the block the popup was on, or show it"::
+    get(PT, current_block, Block),
+    Block \== @nil,
+    send(Block, toggle_fold).
+
+toggle_fold(PT) :->
+    "Hide the output of the command being edited, or show it again"::
+    get(PT, blocks, Chain),
+    chain_list(Chain, Blocks),
+    reverse(Blocks, Recent),
+    member(Block, Recent),
+    send(Block, toggle_fold),
+    !.
+
+previous_prompt(PT) :->
+    "Scroll to the prompt before the topmost one in view"::
+    prompt_step(PT, -1).
+
+next_prompt(PT) :->
+    "Scroll to the prompt after the topmost one in view"::
+    prompt_step(PT, 1).
+
+%!  prompt_step(+Terminal, +Dir) is semidet.
+%
+%   Scroll to the block Dir away from the one the top of the window is
+%   in, which is what makes repeating the command walk the history
+%   rather than return to where it started.
+
+prompt_step(PT, Dir) :-
+    get(PT, blocks, Chain),
+    chain_list(Chain, Blocks),
+    Blocks \== [],
+    (   get(PT, block_at, point(0, 0), Here),
+        nth0(At, Blocks, Here)
+    ->  true
+    ;   At = 0
+    ),
+    To is At+Dir,
+    nth0(To, Blocks, Block),
+    send(Block, scroll_to).
 
 inject(PT, Command:prolog) :->
     "Inject Prolog goal in commandline"::
@@ -921,12 +1092,24 @@ popup(T, Popup:popup*) :->
     ;   send(T, slot, popup_gesture, popup_gesture(Popup))
     ).
 
-show_popup(T, Ev:event) :->
-    "Open popup if this is defined"::
-    (   get(T, slot, popup_gesture, G),
-        G \== @nil
-    ->  send(G, event, Ev)
+block_popup(T, Popup:popup*) :->
+    "Associate a menu with the fold marker of a block"::
+    send(T, slot, block_popup, Popup),
+    (   Popup == @nil
+    ->  send(T, slot, block_gesture, @nil)
+    ;   send(T, slot, block_gesture, popup_gesture(Popup))
     ).
+
+show_popup(T, Ev:event) :->
+    "Open the popup for what the event is on"::
+    (   get(T, fold_at, Ev, Block),      % the marker of a block
+        get(T, slot, block_gesture, G),
+        G \== @nil
+    ->  send(T, slot, current_block, Block)
+    ;   get(T, slot, popup_gesture, G),
+        G \== @nil
+    ),
+    send(G, event, Ev).
 
 :- pce_group(font).
 

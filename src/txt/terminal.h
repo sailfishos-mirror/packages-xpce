@@ -125,6 +125,8 @@ typedef struct rlc_anchors
   int	input_line,  input_char;	/* `B': and the line the user edits */
   int	output_line, output_char;	/* `C': it was entered; output follows */
   int	end_line,    end_char;		/* `D': and the output ends here */
+  bool	continued;			/* `A;k=s': typed over several lines */
+  int	cont_char;			/* where its later lines start */
   int	hidden_lines;			/* rows the fold hides, if folded */
 } rlc_anchors, *RlcAnchors;
 

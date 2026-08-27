@@ -174,6 +174,7 @@ terminal_test_unit(terminal_alt_scroll).
 terminal_test_unit(terminal_mouse_reports).
 terminal_test_unit(terminal_wrap).
 terminal_test_unit(terminal_search).
+terminal_test_unit(terminal_blocks).
 terminal_test_unit(terminal_isearch).
 terminal_test_unit(terminal_selection_matches).
 terminal_test_unit(terminal_resize).
@@ -611,6 +612,20 @@ term_select(terminal(_, xpce(_, TI)), From, To) :-
 
 term_scroll_to(terminal(_, xpce(_, TI)), Index) :-
     send(TI, scroll_to, Index).
+
+%!  term_blocks(+T, -Blocks) is det.
+%
+%   The commands the client has run, as terminal_block objects.
+
+term_blocks(terminal(_, xpce(_, TI)), Blocks) :-
+    get(TI, blocks, Chain),
+    chain_list(Chain, Blocks).
+
+%!  term_block_content(+Block, +What, -Atom) is semidet.
+
+term_block_content(Block, What, Atom) :-
+    get(Block, content, What, String),
+    get(String, value, Atom).
 
 %!  term_search_options(+T, -Options) is semidet.
 %
@@ -6061,3 +6076,271 @@ report_failure(_T, P, R, Prompt, state(Cs, Cursor),
     format(user_error, "command history (in order):~n", []),
     forall(member(C, History),
            format(user_error, "    ~q~n", [C])).
+
+
+		 /*******************************
+		 *        SEMANTIC BLOCKS       *
+		 *******************************/
+
+/** Test that the OSC 133 marks of the commandline editor add up to one
+    terminal_block per command, against the real client rather than the
+    escape sequences on their own -- which is where the marks arrive as
+    often as the prompt is drawn rather than as often as it is issued.
+*/
+
+:- begin_tests(terminal_blocks,
+               [ condition(needs([program_output, selection])),
+                 setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
+
+%!  run_goal(+T, +Goal, +Marker) is det.
+%
+%   Type Goal, run it, and wait until Marker is on the screen and the
+%   prompt is back.
+
+run_goal(T, Goal, Marker) :-
+    type(T, Goal),
+    key(T, enter),
+    assertion(wait_until(marker_on_screen(T, Marker), 15)),
+    assertion(wait_for_prompt(T)).
+
+%!  finished_blocks(+T, -Blocks) is det.
+%
+%   The blocks whose output has ended, i.e. everything but the prompt
+%   the terminal is sitting at.
+
+finished_blocks(T, Finished) :-
+    term_blocks(T, Blocks),
+    include([B]>>get(B, end, _), Blocks, Finished).
+
+test(a_command_is_a_block, [setup(test_begin(T))]) :-
+    run_goal(T, 'format("aap~n").', aap),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    %  the command, and not the return that entered it
+    assertion(term_block_content(Block, command, 'format("aap~n").')),
+    assertion(term_block_content(Block, output, 'aap\ntrue.\n\n')).
+
+test(the_output_ends_at_the_next_prompt, [setup(test_begin(T))]) :-
+    %  The client marks the end of the output with `D' before it asks
+    %  for the next line, so what the block holds stops short of the
+    %  prompt that follows it.
+    run_goal(T, 'format("noot~n").', noot),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    term_block_content(Block, output, Out),
+    assertion(\+ sub_atom(Out, _, _, _, '?-')).
+
+test(redrawing_the_prompt_adds_no_block, [setup(test_begin(T))]) :-
+    %  `A' and `B' ride inside the prompt string, so libedit emits them
+    %  again on every redisplay.  Typing and taking it back again is
+    %  several of those; the count must not move.
+    run_goal(T, 'format("mies~n").', mies),
+    term_blocks(T, Before),
+    length(Before, N),
+    forall(between(1, 3, _),
+           ( type(T, 'abc'), key(T, ctrl_a), key(T, ctrl_e),
+             key(T, ctrl_u), drive(0.2) )),
+    assertion(wait_for_prompt(T)),
+    term_blocks(T, After),
+    assertion(length(After, N)).
+
+test(clearing_the_screen_drops_what_it_clears, [setup(test_begin(T))]) :-
+    %  ^L asks the client to clear the scroll-back.  The lines a block
+    %  points at go with it, and so does the block.
+    run_goal(T, 'format("weg~n").', weg),
+    term_blocks(T, Before),
+    length(Before, N),
+    key(T, ctrl_l),
+    assertion(wait_for_prompt(T)),
+    term_blocks(T, After),
+    length(After, M),
+    assertion(M < N).
+
+test(each_command_gets_its_own, [setup(test_begin(T))]) :-
+    run_goal(T, 'format("een~n").',  een),
+    run_goal(T, 'format("twee~n").', twee),
+    run_goal(T, 'format("drie~n").', drie),
+    finished_blocks(T, Blocks),
+    length(Blocks, N),
+    assertion(N >= 3),
+    length(Last3, 3),
+    append(_, Last3, Blocks),
+    !,
+    maplist([B,C]>>term_block_content(B, command, C), Last3, Commands),
+    assertion(Commands == ['format("een~n").',
+                           'format("twee~n").',
+                           'format("drie~n").']).
+
+test(a_term_typed_over_several_lines_is_one_block,
+     [setup(test_begin(T))]) :-
+    %  The reader asks for a line at a time until the full stop, so the
+    %  client issues a continuation prompt for each.  It marks those
+    %  with `A;k=s', which is what keeps them one command here.
+    tt_type_lines(T, ['forall(between(1,3,QX),',
+                      '  format("part-~w~n", [QX])).']),
+    assertion(wait_until(marker_on_screen(T, 'part-3'), 15)),
+    assertion(wait_for_prompt(T)),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    term_block_content(Block, command, Cmd),
+    assertion(sub_atom(Cmd, _, _, _, 'forall(between(1,3,QX),')),
+    assertion(sub_atom(Cmd, _, _, _, 'part-~w')),
+    term_block_content(Block, output, Out),
+    assertion(sub_atom(Out, _, _, _, 'part-1')),
+    assertion(sub_atom(Out, _, _, _, 'part-3')),
+    assertion(\+ sub_atom(Out, _, _, _, 'forall(')).
+
+test(a_continued_command_folds_from_its_first_line,
+     [setup(test_begin(T))]) :-
+    tt_type_lines(T, ['forall(between(1,6,QY),',
+                      '  format("fold-~w~n", [QY])).']),
+    assertion(wait_until(marker_on_screen(T, 'fold-6'), 15)),
+    assertion(wait_for_prompt(T)),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    assertion(marker_on_screen(T, 'fold-3')),
+    assertion(send(Block, fold)),
+    assertion(\+ marker_on_screen(T, 'fold-3')),
+    assertion(marker_on_screen(T, 'forall(between(1,6,QY),')),
+    assertion(marker_on_screen(T, 'format("fold-~w~n", [QY])).')),
+    assertion(send(Block, unfold)).
+
+test(a_copy_of_a_command_is_what_was_typed, [setup(test_begin(T))]) :-
+    %  Two things the screen has that the command has not: the return
+    %  that entered it, and the continuation prompt the client drew down
+    %  the left of every line after the first.
+    tt_type_lines(T, ['forall(between(1,2,QC),',
+                      '  format("cp-~w~n", [QC])).']),
+    assertion(wait_until(marker_on_screen(T, 'cp-2'), 15)),
+    assertion(wait_for_prompt(T)),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    tt_copy(T, Block, command, Copied),
+    assertion(\+ sub_atom(Copied, _, _, _, '|')),
+    assertion(\+ sub_atom(Copied, _, 1, 0, '\n')),
+    assertion(\+ sub_atom(Copied, _, 1, 0, '\r')),
+    assertion(sub_atom(Copied, 0, _, _, 'forall(between(1,2,QC),')),
+    assertion(sub_atom(Copied, _, _, 0, 'format("cp-~w~n", [QC])).')).
+
+%!  tt_copy(+T, +Block, +What, -Text) is det.
+%
+%   Put a part of Block on the clipboard and read it back.
+
+tt_copy(terminal(_, xpce(_, TI)), Block, What, Text) :-
+    send(TI, slot, current_block, Block),
+    send(TI, copy_block, What),
+    get(@display, paste, clipboard, String),
+    get(String, value, Text).
+
+test(the_marker_has_a_menu_of_its_own, [setup(test_begin(T))]) :-
+    %  The triangle in the margin is about the one command it stands
+    %  beside; the text beside it is about the terminal.
+    run_goal(T, 'format("menu~n").', menu),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    tt_head_row(T, Block, Row),
+    T = terminal(_, xpce(_, TI)),
+    tt_gutter_event(TI, Row, Gutter),      % the margin
+    assertion(get(TI, fold_at, Gutter, Block)),
+    tt_event(TI, 8, Row, Text),            % the command itself
+    assertion(\+ get(TI, fold_at, Text, _)),
+    get(TI, block_popup, Popup),
+    assertion(Popup \== @nil),
+    send(TI, update_block_popup, Popup, Gutter),
+    assertion(tt_item_label(Popup, fold_output, 'Hide output')),
+    get(Popup, member, repeat_command, Repeat),
+    assertion(get(Repeat, active, @on)),
+    send(Block, fold),
+    send(TI, update_block_popup, Popup, Gutter),
+    assertion(tt_item_label(Popup, fold_output, 'Show output')),
+    send(Block, unfold).
+
+test(repeat_types_the_command_again, [setup(test_begin(T))]) :-
+    run_goal(T, 'format("again~n").', again),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    tt_head_row(T, Block, Row),
+    T = terminal(_, xpce(_, TI)),
+    tt_gutter_event(TI, Row, Gutter),
+    get(TI, block_popup, Popup),
+    send(TI, update_block_popup, Popup, Gutter),
+    send(TI, repeat_block),
+    drive(0.5),
+    %  it is typed, not entered: the caret sits at the end of it
+    cursor(T, _, CRow),
+    get(TI, row, CRow, S), get(S, value, Line),
+    assertion(sub_atom(Line, _, _, _, 'format("again~n").')),
+    tt_reset(T).
+
+%!  tt_head_row(+T, +Block, -Row) is semidet.
+%
+%   Row of the window the fold marker of Block is on, found by asking
+%   which row the margin answers for.
+
+tt_head_row(terminal(_, xpce(_, TI)), Block, Row) :-
+    get(TI, rows, N), End is N-1,
+    between(0, End, Row),
+    tt_gutter_event(TI, Row, Ev),
+    get(TI, fold_at, Ev, Block),
+    !.
+
+%!  tt_gutter_event(+TI, +Row, -Event) is det.
+%
+%   An event in the one column of margin the fold marker is drawn in.
+%   cell_pixel/5 counts from the first cell of text, which is past it.
+
+tt_gutter_event(TI, Row, Ev) :-
+    get(TI, height, H),
+    get(TI, rows, Rows),
+    xpce_cw(TI, CW),
+    CH is H/Rows,
+    X is max(0, integer(CW/2)),
+    Y is integer(CH*Row + CH/2),
+    new(Ev, event(ms_right_down, TI, X, Y, 0, 0)).
+
+tt_event(TI, Col, Row, Ev) :-
+    cell_pixel(TI, Col, Row, X, Y),
+    new(Ev, event(ms_right_down, TI, X, Y, 0, 0)).
+
+tt_item_label(Popup, Name, Label) :-
+    get(Popup, member, Name, Item),
+    get(Item, label, L),
+    get(L, value, Label).
+
+tt_reset(T) :-
+    key(T, ctrl_e), key(T, ctrl_u), drive(0.2).
+
+%!  tt_type_lines(+T, +Lines) is det.
+%
+%   Type Lines, pressing Return after each.  All but the last leave the
+%   term unfinished, so the client asks for the next with a continuation
+%   prompt.
+
+tt_type_lines(T, Lines) :-
+    forall(member(Line, Lines),
+           ( type(T, Line), key(T, enter), drive(0.3) )).
+
+test(folding_hides_the_output, [setup(test_begin(T))]) :-
+    run_goal(T, 'forall(between(1,6,X), format("line-~w~n", [X])).', 'line-6'),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    assertion(marker_on_screen(T, 'line-3')),
+    assertion(send(Block, fold)),
+    assertion(\+ marker_on_screen(T, 'line-3')),
+    assertion(marker_on_screen(T, 'between(1,6,X)')), % the command stays
+    assertion(send(Block, unfold)),
+    assertion(marker_on_screen(T, 'line-3')).
+
+test(a_fold_hides_nothing_from_the_buffer, [setup(test_begin(T))]) :-
+    run_goal(T, 'forall(between(1,6,X), format("kept-~w~n", [X])).', 'kept-6'),
+    finished_blocks(T, Blocks),
+    last(Blocks, Block),
+    term_length(T, Length),
+    assertion(send(Block, fold)),
+    assertion(term_length(T, Length)),
+    assertion(term_find(T, 0, 'kept-3', _)),
+    assertion(send(Block, unfold)).
+
+:- end_tests(terminal_blocks).

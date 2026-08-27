@@ -65,12 +65,25 @@ keystrokes and hovered hyperlinks.
 - terminal_image<->link_armed_style: style*
     Style applied to the hyperlink under the mouse pointer.
 
+- terminal_image<->fold_style: style*
+    Style of the fold marker and the tally beside a folded command.
+    `@nil` takes both away, and with them the click that toggles a fold.
+
 - terminal_image<->ansi_colours: vector*
     Vector of 16 `colour` objects: the 8 base ANSI colours followed
     by their bright variants.
 
 - terminal_image<-armed_link: bool
     `@on` when the pointer is over a hyperlink.
+
+- terminal_image<-armed_fold: bool
+    `@on` when the pointer is over the marker of a fold, i.e. in the
+    left margin beside a command whose output can be hidden.
+
+- terminal_image<-blocks: chain
+    The commands the client has run, as `terminal_block` objects, oldest
+    first.  Empty unless the client marks its prompts; see class
+    `terminal_block`.
 
 - terminal_image<->link_message: code*
     Optional code invoked when a hyperlink is activated.
@@ -177,6 +190,11 @@ keystrokes and hovered hyperlinks.
 
 - terminal_image->paste: which=[{primary,clipboard}]
     Paste the contents of the primary selection or clipboard.
+
+- terminal_image->fold_all
+- terminal_image->unfold_all
+    Hide the output of every command that has finished, or show it all
+    again.  See `terminal_block->fold`.
 
 - terminal_image->select_all
     Select the entire buffer (including scroll-back).
@@ -344,6 +362,20 @@ keystrokes and hovered hyperlinks.
 - terminal_image<-contents: from=[int], size=[int] -> string
     Text of the buffer from `from`.
 
+- terminal_image<-block: id=int -> terminal_block
+    The block with this `<-id`, or fail if it has scrolled out of the
+    buffer.
+
+- terminal_image<-block_at: at=int|point|event -> terminal_block
+    The block holding a character index, or the one at a position given
+    as pixels or taken from an event.  Fails outside every block.
+
+- terminal_image<-fold_at: at=point|event -> terminal_block
+    The block whose fold marker is at this position, i.e. fails unless
+    the position is in the left margin beside a command whose output can
+    be hidden.  What tells a click or a popup on the marker from one on
+    the text.
+
 - terminal_image<-cell_style: column=int, row=int -> style
     The style painted over the cell at `column` of the visible `row`:
     the selection, the hit of an incremental search, one of its other
@@ -379,10 +411,33 @@ that a wrapped line and its continuation are not separated at all --
 
 **Indices are relative to the oldest line still kept and shift whenever
 output pushes lines out of the scroll-back.**  One is only good until the
-client writes again.  These methods do not see the alternate screen: the
+client writes again; `terminal_block<-id` is the handle that outlives
+them.  These methods do not see the alternate screen: the
 lines an application replaced left the buffer, and while it is up they
 see the scroll-back that came before it.
 
+
+## Folding {#class-terminal_image-folding}
+
+The output of a command that has finished can be taken off the display
+with `terminal_block->fold`, leaving the command that produced it with a
+triangle in the left margin and a tally of what is hidden.  A click on
+the triangle toggles it; unlike a hyperlink it needs no modifier,
+because the marker belongs to the terminal rather than to the client.
+
+Folding is a property of the view and not of the text.  `<-contents`,
+`<-find`, `<-selected` and `->select_all` keep seeing what a fold hides;
+only what is painted, the rows a click maps to and the scrollbar leave
+it out.  `->scroll_to` opens a fold it lands in, as does an incremental
+search whose hit is inside one.
+
+Closing a fold takes rows out of the window, so a window that was showing
+the end of the buffer is pulled back to go on showing it.  One the user
+has scrolled away from stays where they put it.
+
+`<-fold_at` says whether a position is on a marker, which is what lets a
+popup on the marker be about the one command it stands beside rather than
+about the terminal.  Class `prolog_terminal` uses it for `->block_popup`.
 
 ## Class variables {#class-terminal_image-classvars}
 
@@ -395,6 +450,7 @@ see the scroll-back that came before it.
 - exact_case, search_word: both `@off`, so matching ignores case and
   does not ask for word boundaries.
 - link_style, link_armed_style: blue, dotted/solid underline.
+- fold_style: grey50; `@nil` takes the fold markers away.
 - save_lines: 1000 by default.
 - auto_copy: copy selected text to clipboard automatically (default
   `@on` on macOS, `@off` elsewhere).

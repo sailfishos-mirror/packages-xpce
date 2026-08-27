@@ -347,7 +347,8 @@ static bool	rlc_has_selection(RlcData b);
 static void	rlc_select_all(RlcData b);
 static uchar_t   *rlc_selection(RlcData b);
 static uchar_t   *rlc_read_from_window(RlcData b, int sl, int sc,
-				       int el, int ec, const char *sep);
+				       int el, int ec, const char *sep,
+				       int skip);
 static void	rlc_free(void *ptr);
 static void   *rlc_malloc(size_t bytes);
 static void	rlc_set_selection(RlcData b, int sl, int sc, int el, int ec);
@@ -2260,7 +2261,7 @@ getRowTerminalImage(TerminalImage ti, Int arg)
   int line = rlc_view_line_at_row(b, row);
   RlcTextLine tl = &b->lines[line];
 
-  uchar_t *buf = rlc_read_from_window(b, line, 0, line, tl->size, "\n");
+  uchar_t *buf = rlc_read_from_window(b, line, 0, line, tl->size, "\n", 0);
   if ( buf )
   { StringObj str = TCHAR2String(buf);
     rlc_free(buf);
@@ -2715,6 +2716,8 @@ rlc_new_anchors(void)
     a->input_line  = a->input_char  = ANCHOR_NONE;
     a->output_line = a->output_char = ANCHOR_NONE;
     a->end_line    = a->end_char    = ANCHOR_NONE;
+    a->continued   = false;
+    a->cont_char   = ANCHOR_NONE;
     a->hidden_lines = 0;
   }
 
@@ -2805,8 +2808,18 @@ block_range(TerminalBlock tb, Name what,
 
   if ( what == NAME_command )
   { if ( block_anchor(b, a->output_line) )
-    { *el = a->output_line;
-      *ec = a->output_char;
+    { /* The output begins where the line the user entered ended, which
+       * is the start of the line below it: the client echoed the return
+       * that entered it.  What was typed stops short of that break --
+       * a command is a command, not a command and a newline.
+       */
+      if ( a->output_char == 0 && a->output_line != b->first )
+      { *el = PrevLine(b, a->output_line);
+	*ec = b->lines[*el].size;
+      } else
+      { *el = a->output_line;
+	*ec = a->output_char;
+      }
     } else				/* still being edited */
     { *el = b->caret_y;
       *ec = b->caret_x;
@@ -2893,18 +2906,36 @@ getEndTerminalBlock(TerminalBlock tb)
  * <-selected uses, by going through the selection.
  */
 
+static uchar_t *
+block_text(TerminalBlock tb, Name what, const char *sep)
+{ RlcData b = block_data(tb);
+  int sl, sc, el, ec, skip = 0;
+
+  if ( !block_range(tb, what, &sl, &sc, &el, &ec) )
+    return NULL;
+
+  /* The command of an input the client collected over several lines has
+   * a continuation prompt down its left-hand side.  Those belong to the
+   * client rather than to what was typed, so they are read over: what
+   * comes back is the command, which is what a copy of it is for and
+   * what handing it back to the client needs.  `all' keeps them: it is
+   * what the window shows.
+   */
+  if ( what == NAME_command && tb->anchors->cont_char != ANCHOR_NONE )
+    skip = tb->anchors->cont_char;
+
+  return rlc_read_from_window(b, sl, sc, el, ec, sep, skip);
+}
+
+
 static StringObj
 getContentTerminalBlock(TerminalBlock tb, Name what)
-{ RlcData b = block_data(tb);
-  int sl, sc, el, ec;
-  uchar_t *text;
+{ uchar_t *text;
 
   if ( isDefault(what) )
     what = NAME_output;
-  if ( !block_range(tb, what, &sl, &sc, &el, &ec) )
-    fail;
 
-  if ( (text=rlc_read_from_window(b, sl, sc, el, ec, "\n")) )
+  if ( (text=block_text(tb, what, "\n")) )
   { StringObj str = TCHAR2String(text);
 
     rlc_free(text);
@@ -2935,12 +2966,39 @@ selectTerminalBlock(TerminalBlock tb, Name what)
 }
 
 
+/* Copy goes by the text of the block rather than by the region of the
+ * screen it covers, which is what ->select makes the selection: the
+ * continuation prompts of a command collected over several lines are on
+ * the screen but were never typed, and a copy of the command is for
+ * handing back to something that will read it.  Lines are separated the
+ * way <-selected separates them, which is what another program expects.
+ */
+
 static status
 copyTerminalBlock(TerminalBlock tb, Name what, Name which)
-{ if ( !selectTerminalBlock(tb, what) )
+{ uchar_t *text;
+
+  if ( isDefault(what) )
+    what = NAME_output;
+  if ( !(text=block_text(tb, what, "\r\n")) )
     fail;
 
-  return send(tb->terminal, NAME_copy, which, EAV);
+  StringObj str = TCHAR2String(text);
+  rlc_free(text);
+  if ( !str )
+    fail;
+
+  DisplayObj d = CurrentDisplay(tb->terminal);
+  status rc;
+
+  addCodeReference(str);
+  if ( isDefault(which) )
+    rc = send(d, NAME_copy, str, EAV);
+  else
+    rc = send(d, NAME_selection, which, str, EAV);
+  considerPreserveObject(str);
+
+  return rc;
 }
 
 
@@ -3142,6 +3200,32 @@ getBlockAtTerminalImage(TerminalImage ti, Any where)
   }
 
   if ( (tb=block_at_position(ti, line, cell)) )
+    answer(tb);
+
+  fail;
+}
+
+
+/** The block whose fold marker is at a position, i.e. whether the
+ * pointer is on a triangle in the margin.  What a click there acts on,
+ * and what decides whether a popup is about the block or about the
+ * terminal.
+ */
+
+static TerminalBlock
+getFoldAtTerminalImage(TerminalImage ti, Any where)
+{ TerminalBlock tb;
+  Int x, y;
+
+  if ( instanceOfObject(where, ClassEvent) )
+  { get_xy_event(where, ti, ON, &x, &y);
+  } else
+  { Point pt = where;
+    x = pt->x;
+    y = pt->y;
+  }
+
+  if ( (tb=rlc_fold_at_gutter(ti, valInt(x), valInt(y))) )
     answer(tb);
 
   fail;
@@ -3414,7 +3498,10 @@ static getdecl get_terminal_image[] =
      NAME_process, "Block with this <-id"),
   GM(NAME_blockAt, 1, "terminal_block", "at=int|point|event",
      getBlockAtTerminalImage,
-     NAME_process, "Block holding an index or a position")
+     NAME_process, "Block holding an index or a position"),
+  GM(NAME_foldAt, 1, "terminal_block", "at=point|event",
+     getFoldAtTerminalImage,
+     NAME_process, "Block whose fold marker is at this position")
 };
 
 static classvardecl rc_terminal_image[] =
@@ -4162,7 +4249,7 @@ rlc_select_all(RlcData b)
 
 static uchar_t *
 rlc_read_from_window(RlcData b, int sl, int sc, int el, int ec,
-		     const char *sep)
+		     const char *sep, int skip)
 { int bufsize = 256;
   size_t seplen = strlen(sep);
   uchar_t *buf;
@@ -4179,7 +4266,7 @@ rlc_read_from_window(RlcData b, int sl, int sc, int el, int ec,
   if ( !(buf = rlc_malloc(bufsize * sizeof(uchar_t))) )
     return NULL;			/* not enough memory */
 
-  for( ; ; sc = 0, sl = NextLine(b, sl))
+  for( ; ; )
   { RlcTextLine tl = &b->lines[sl];
     if ( tl )
     { int e = (sl == el ? ec : tl->size);
@@ -4204,7 +4291,9 @@ rlc_read_from_window(RlcData b, int sl, int sc, int el, int ec,
       return buf;
     }
 
-    if ( tl && !tl->softreturn )
+    bool hard = tl && !tl->softreturn;
+
+    if ( hard )
     { if ( i+(int)seplen >= bufsize )
       { bufsize *= 2;
 	if ( !(buf = rlc_realloc(buf, bufsize * sizeof(uchar_t))) )
@@ -4213,6 +4302,15 @@ rlc_read_from_window(RlcData b, int sl, int sc, int el, int ec,
       for(const char *s = sep; *s; s++)
 	buf[i++] = *s;
     }
+
+    sl = NextLine(b, sl);
+    /* `skip' passes over what stands in front of every line but the
+     * first, which is how the text of a command typed over several
+     * lines is read without the continuation prompts the client drew
+     * down its left-hand side.  A wrapped line has no prompt of its
+     * own, so only a hard break skips.
+     */
+    sc = hard ? skip : 0;
   }
 }
 
@@ -4231,7 +4329,7 @@ rlc_selection(RlcData b)
 { if ( rlc_has_selection(b) )
     return rlc_read_from_window(b,
 				b->sel_start_line, b->sel_start_char,
-				b->sel_end_line,   b->sel_end_char, "\r\n");
+				b->sel_end_line,   b->sel_end_char, "\r\n", 0);
   return NULL;
 }
 
@@ -4303,7 +4401,7 @@ rlc_selection_needle(RlcData b)
   uchar_t *sel = rlc_read_from_window(b,
 				      b->sel_start_line, b->sel_start_char,
 				      b->sel_end_line,   b->sel_end_char,
-				      "\n");
+				      "\n", 0);
   if ( !sel )
     return NULL;
 
@@ -5559,14 +5657,25 @@ rlc_draw_fold_marker(RlcData b, int line, int x, int ty)
        !(tb=rlc_fold_head_block(b, line)) )
     return;
 
-  double x0 = x + b->cw*0.25, x1 = x + b->cw*0.75;
-  double y0 = ty - b->cb + b->ch*0.30, y1 = ty - b->cb + b->ch*0.70;
+  /* As wide as the column it is drawn in, and as tall as that is wide:
+   * a marker small enough to be mistaken for a speck of dirt is worse
+   * than none.  Only a cell shorter than it is wide makes it smaller.
+   */
+  double cx = x + b->cw/2.0;
+  double cy = ty - b->cb + b->ch/2.0;
+  double w  = b->cw*0.9;
+  double h  = w*0.87;
+
+  if ( h > b->ch*0.8 )
+  { h = b->ch*0.8;
+    w = h/0.87;
+  }
 
   r_fillpattern(colour, NAME_foreground);
-  if ( isOn(tb->folded) )
-    r_fill_triangle(x0, y0, x1, (y0+y1)/2, x0, y1);
-  else
-    r_fill_triangle(x0, y0, x1, y0, (x0+x1)/2, y1);
+  if ( isOn(tb->folded) )		/* pointing at what it is hiding */
+    r_fill_triangle(cx-h/2, cy-w/2, cx+h/2, cy, cx-h/2, cy+w/2);
+  else					/* and at what it can hide */
+    r_fill_triangle(cx-w/2, cy-h/2, cx+w/2, cy-h/2, cx, cy+h/2);
 }
 
 
@@ -6683,9 +6792,14 @@ rlc_restamp_folds(RlcData b)
 { TerminalImage ti = b->object;
   Cell cl;
   int folds = 0;
+  /* Asked before the bits are rewritten, so it is of the window as it
+   * stands: is the end of the buffer on it? */
+  bool at_end = rlc_view_count(b, b->window_start, b->last) < b->window_size;
 
   for(int l=0; l<b->height; l++)
-  { b->lines[l].folded    = false;
+  { if ( b->lines[l].folded || b->lines[l].fold_head )
+      b->lines[l].changed |= CHG_CHANGED;   /* it may not be marked now */
+    b->lines[l].folded    = false;
     b->lines[l].fold_head = false;
   }
 
@@ -6702,13 +6816,15 @@ rlc_restamp_folds(RlcData b)
       continue;
 
     b->lines[head].fold_head = true;	/* it can be folded, so it is */
-    if ( !isOn(tb->folded) )		/* marked whether it is or not */
+    b->lines[head].changed |= CHG_CHANGED;  /* marked whether it is or not */
+    if ( !isOn(tb->folded) )
       continue;
 
     for(int l=from; ; l=NextLine(b, l))
     { if ( l == head || l == b->last )	/* never the caret's own line */
 	break;
       b->lines[l].folded = true;
+      b->lines[l].changed |= CHG_CHANGED;
       hidden++;
       if ( l == to )
 	break;
@@ -6722,6 +6838,19 @@ rlc_restamp_folds(RlcData b)
   }
 
   b->folds = folds;
+
+  /* Closing a fold takes rows out of the window and everything under it
+   * moves up.  A window that was showing the end of the buffer has to go
+   * on showing it, or the last line walks off the bottom row and leaves
+   * the blank rest of the buffer behind it.  Opening one is the same the
+   * other way about.
+   */
+  if ( at_end )
+  { if ( rlc_view_count(b, b->first, b->last) >= b->window_size )
+      b->window_start = rlc_view_add(b, b->last, -(b->window_size-1));
+    else
+      b->window_start = b->first;
+  }
 
   /* The window must start on a line it can show. */
   while ( rlc_folded(b, b->window_start) && b->window_start != b->first )
@@ -8495,6 +8624,12 @@ report_directory(RlcData b, Name dir, Name host)
  * the block it belongs to is re-anchored rather than replaced.  What
  * settles it is `C': once the line has been entered, the next `A' is a
  * new prompt.
+ *
+ * A command can also take more than one line to type.  The client asks
+ * for each of them separately -- a Prolog term is read a line at a time
+ * until its full stop, a shell keeps reading while a quote is open --
+ * and marks all but the first with `A;k=s', the secondary prompt.  Those
+ * lines are one command, and the block spans all of them.
  */
 
 /** The newest block, or NULL if the client has marked nothing yet. */
@@ -8630,6 +8765,23 @@ osc133_open_block(RlcData b)
 }
 
 
+/** The value of a `k=' parameter of a mark, or 0.  Everything after the
+ * mark letter is a list of key=value parameters; `k' says what kind of
+ * prompt an `A' is, `s' for the secondary prompt of an input the client
+ * is still collecting.  See osc133_mark().
+ */
+
+static int
+osc133_kind(const uchar_t *param)
+{ for(const uchar_t *s = param; *s; s++)
+  { if ( s[0] == ';' && s[1] == 'k' && s[2] == '=' )
+      return (int)s[3];
+  }
+
+  return 0;
+}
+
+
 static void
 osc133_mark(RlcData b, const uchar_t *param)
 { TerminalBlock tb = rlc_last_block(b);
@@ -8640,11 +8792,34 @@ osc133_mark(RlcData b, const uchar_t *param)
   switch(param[0])
   { case 'A':				/* a prompt, so not yet */
       b->input_active = false;
+      if ( a && osc133_kind(param) == 's' )
+      {	/* A secondary prompt: the client is asking for another line of
+	 * an input it has not finished collecting, which is one command
+	 * to whoever is typing it.  The block stays open, and with it
+	 * the prompt of the line the command started on, which is where
+	 * its marker belongs.
+	 *
+	 * If nothing was printed between the last two marks there is no
+	 * output yet, only a line of the command; let go of it so that
+	 * the `C' after this prompt anchors the real output.  If
+	 * something was printed, this is a read from inside a command
+	 * that is running, and its output stands.
+	 */
+	a->continued = true;
+	if ( a->output_line != ANCHOR_NONE &&
+	     a->output_line == a->end_line && a->output_char == a->end_char )
+	{ a->output_line = a->output_char = ANCHOR_NONE;
+	  a->end_line    = a->end_char    = ANCHOR_NONE;
+	  assign(tb, running, OFF);
+	}
+	break;
+      }
       if ( !a || a->output_line != ANCHOR_NONE )
       {	if ( a && a->end_line == ANCHOR_NONE )
 	{ a->end_line = b->caret_y;	/* a client that marks no `D' ends */
 	  a->end_char = b->caret_x;	/* its output where the next one starts */
 	  assign(tb, running, OFF);
+	  rlc_restamp_folds(b);		/* it can be folded now */
 	}
 	osc133_open_block(b);
 	if ( !(tb=rlc_last_block(b)) )
@@ -8664,12 +8839,17 @@ osc133_mark(RlcData b, const uchar_t *param)
 	  return;
 	a = tb->anchors;
       }
-      a->input_line = b->caret_y;
-      a->input_char = b->caret_x;
+      if ( !a->continued )		/* the command starts on its first */
+      { a->input_line = b->caret_y;	/* line, not on the one being added */
+	a->input_char = b->caret_x;
+      } else if ( a->cont_char == ANCHOR_NONE )
+      { a->cont_char = b->caret_x;	/* where its later lines start, past
+					   the continuation prompt */
+      }
       break;
     case 'C':				/* the line was entered */
       b->input_active = false;
-      if ( a )
+      if ( a && a->output_line == ANCHOR_NONE )
       { a->output_line = b->caret_y;
 	a->output_char = b->caret_x;
 	assign(tb, running, ON);
@@ -8681,6 +8861,7 @@ osc133_mark(RlcData b, const uchar_t *param)
       { a->end_line = b->caret_y;
 	a->end_char = b->caret_x;
 	assign(tb, running, OFF);
+	rlc_restamp_folds(b);		/* it can be folded now */
       }
       break;
   }
