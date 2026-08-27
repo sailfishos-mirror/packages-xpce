@@ -2998,7 +2998,7 @@ copyTerminalBlock(TerminalBlock tb, Name what, Name which)
 
   if ( isDefault(what) )
     what = NAME_output;
-  if ( !(text=block_text(tb, what, "\r\n")) )
+  if ( !(text=block_text(tb, what, "\n")) )
     fail;
 
   StringObj str = TCHAR2String(text);

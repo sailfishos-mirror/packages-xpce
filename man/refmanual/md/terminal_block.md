@@ -79,8 +79,10 @@ outlives them.
     of the `command` is what was typed: without the return that entered
     it, and without the continuation prompts the client drew down the
     left of a command it collected over several lines.  `all` keeps
-    them, being what the window shows.  Lines are separated by `\r\n`,
-    as `terminal_image<-selected` separates them.  Does not disturb the
+    them, being what the window shows.  Lines are separated by a single
+    newline, as `<-content` separates them, and not by the `\r\n` of
+    `terminal_image<-selected`: what is copied here is a command to be
+    read back, not a region of the screen.  Does not disturb the
     selection; `->select` is for that.
 
 - terminal_block->scroll_to

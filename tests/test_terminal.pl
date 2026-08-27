@@ -6382,7 +6382,10 @@ test(a_copy_of_a_command_is_what_was_typed, [setup(test_begin(T))]) :-
     tt_copy(T, Block, command, Copied),
     assertion(\+ sub_atom(Copied, _, _, _, '|')),
     assertion(\+ sub_atom(Copied, _, 1, 0, '\n')),
-    assertion(\+ sub_atom(Copied, _, 1, 0, '\r')),
+    %  a single newline between the lines, not the \r\n of a screen
+    %  region: what is copied is a command to be read back
+    assertion(\+ sub_atom(Copied, _, _, _, '\r')),
+    assertion(sub_atom(Copied, _, _, _, '\n')),
     assertion(sub_atom(Copied, 0, _, _, 'forall(between(1,2,QC),')),
     assertion(sub_atom(Copied, _, _, 0, 'format("cp-~w~n", [QC])).')).
 

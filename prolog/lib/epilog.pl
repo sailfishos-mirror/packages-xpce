@@ -599,7 +599,13 @@ block_popup(PT, Terminal) :-
          message(PT, update_block_popup, @receiver, @event)),
     send_list(BP, append,
               [ menu_item(fold_output,
-                          message(Terminal, fold_block),
+                          message(Terminal, fold_block)),
+                menu_item(hide_all_outputs,
+                          message(Terminal, fold_all_blocks, @on)),
+                menu_item(show_all_outputs,
+                          message(Terminal, fold_all_blocks, @off)),
+                menu_item(remove_command,
+                          message(Terminal, remove_block),
                           end_group := @on),
                 menu_item(copy_command,
                           message(Terminal, copy_block, command)),
@@ -611,10 +617,7 @@ block_popup(PT, Terminal) :-
                           message(Terminal, select_block, output),
                           end_group := @on),
                 menu_item(repeat_command,
-                          message(Terminal, repeat_block),
-                          end_group := @on),
-                menu_item(remove_command,
-                          message(Terminal, remove_block))
+                          message(Terminal, repeat_block))
               ]).
 
 unlink(PT) :->
@@ -852,14 +855,32 @@ fold_block(PT) :->
     Block \== @nil,
     send(Block, toggle_fold).
 
+fold_all_blocks(PT, Fold:[bool]) :->
+    "Hide the output of all blocks"::
+    default(Fold, @on, Value),
+    %  Not ->for_all over <-blocks: folding a command that printed
+    %  nothing, or one still running, fails, and this would report the
+    %  work it did as a failure.  ->fold_all passes over those.
+    (   Value == @on
+    ->  send(PT, fold_all)
+    ;   send(PT, unfold_all)
+    ).
+
 toggle_fold(PT) :->
     "Hide the output of the command being edited, or show it again"::
-    get(PT, blocks, Chain),
-    chain_list(Chain, Blocks),
-    reverse(Blocks, Recent),
-    member(Block, Recent),
+    get(PT, blocks, Blocks),
+    enum_backwards(Blocks, Block),
     send(Block, toggle_fold),
     !.
+
+enum_backwards(Chain, Member) :-
+    get(Chain, tail, Last),
+    enum_backwards(Chain, Last, Member).
+
+enum_backwards(_, Current, Current).
+enum_backwards(Chain, Current, Member) :-
+    get(Chain, previous, Current, Prev),
+    enum_backwards(Chain, Prev, Member).
 
 previous_prompt(PT) :->
     "Scroll to the prompt before the topmost one in view"::
