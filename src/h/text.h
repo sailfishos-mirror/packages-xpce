@@ -309,8 +309,10 @@ NewClass(terminal_image)
   Style		nfd_style;		/* Style for NFD grapheme clusters */
   Style		link_style;		/* Style for hyperlinks  */
   Style		link_armed_style;	/* Style for the hovered link  */
+  Style		fold_style;		/* Style for the fold marker */
   Vector	ansi_colours;		/* The 16 ANSI colour codes */
   BoolObj	armed_link;		/* Hovering over link */
+  BoolObj	armed_fold;		/* Hovering over a fold marker */
   Code		link_message;		/* Handle a clicked link */
   ScrollBar	scroll_bar;		/* Associated scrollbar */
   Int		save_lines;		/* # saved lines */
@@ -324,7 +326,24 @@ NewClass(terminal_image)
   BoolObj	search_word;		/* Search matches whole words */
   Name		working_directory;	/* Directory the client reported */
   Name		host;			/* ... and the host it is on */
+  Chain		blocks;			/* terminal_block objects, oldest first */
   struct rlc_data *data;		/* The buffered data */
+End;
+
+/* One command the client ran, as its OSC 133 marks describe it: the
+ * prompt (`A'), the line the user edited (`B'), the output of running it
+ * (`C') and the end of that output (`D', or the prompt after it).  The
+ * block outlives the marks it was made from but not the lines it points
+ * at: once those are pushed out of the scroll-back its <-terminal is
+ * @nil and every method that needs the text fails.
+ */
+
+NewClass(terminal_block)
+  TerminalImage	terminal;		/* Terminal it belongs to, or @nil */
+  Int		id;			/* Handle that survives scrolling */
+  BoolObj	folded;			/* Its output is collapsed */
+  BoolObj	running;		/* `C' seen, no `D' yet */
+  struct rlc_anchors *anchors;		/* Where its marks landed */
 End;
 
 COMMON(void)	update_lsp_pos_text_buffer(TextBuffer tb, size_t from, size_t to,

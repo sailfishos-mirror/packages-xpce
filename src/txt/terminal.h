@@ -106,9 +106,27 @@ typedef struct
   unsigned	 changed : 1;		/* line needs redraw */
   unsigned	 softreturn : 1;	/* wrapped line */
   unsigned	 eol_erased : 1;	/* paint the tail using eol_flags */
+  unsigned	 folded : 1;		/* inside a closed fold: not painted */
+  unsigned	 fold_head : 1;		/* the line that carries its marker */
   text_flags	 eol_flags;		/* background colour erase (bce) */
   int		 line_no;		/* The number of the line */
 } rlc_text_line, *RlcTextLine;
+
+/* Where the OSC 133 marks of one command landed.  A position is a ring
+ * line and a cell on it; -1 for a mark that has not arrived.  This hangs
+ * off a terminal_block (see ../h/text.h) rather than living in the ring,
+ * because it must outlive the lines being rewrapped under it: rlc_resize()
+ * carries it across as an rlc_textpos, exactly as it does the caret and
+ * the selection.
+ */
+
+typedef struct rlc_anchors
+{ int	prompt_line, prompt_char;	/* `A': the prompt starts here */
+  int	input_line,  input_char;	/* `B': and the line the user edits */
+  int	output_line, output_char;	/* `C': it was entered; output follows */
+  int	end_line,    end_char;		/* `D': and the output ends here */
+  int	hidden_lines;			/* rows the fold hides, if folded */
+} rlc_anchors, *RlcAnchors;
 
 typedef enum
 { CMD_INITIAL = 0,
@@ -228,6 +246,8 @@ typedef struct rlc_data
   bool		input_active;		/* OSC 133: between B and C */
   int		input_line;		/* OSC 133 B: where the input */
   int		input_char;		/* the user edits starts */
+  int		next_block_id;		/* <-id of the next terminal_block */
+  int		folds;			/* # closed folds; 0 is the fast path */
   bool		focus_inout_events;	/* Dec Private Mode 1004 */
   bool		alt_scroll;		/* DEC Private Mode 1007 */
   int		mouse_tracking;		/* DEC Private Mode 9/1000/1002/1003 */

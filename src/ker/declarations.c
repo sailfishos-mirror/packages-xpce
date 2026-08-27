@@ -475,6 +475,9 @@ static struct class_definition classdefs[] =
   { NAME_terminalImage, NAME_graphical, makeClassTerminalImage,
     &ClassTerminalImage, "Display text for a terminal" },
 
+  { NAME_terminalBlock, NAME_object, makeClassTerminalBlock,
+    &ClassTerminalBlock, "Prompt, command and output of one command" },
+
   { NAME_textItem, NAME_dialogItem, makeClassTextItem,
     &ClassTextItem, "Text entry field" },
 
