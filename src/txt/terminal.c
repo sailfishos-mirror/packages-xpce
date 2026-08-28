@@ -9316,6 +9316,8 @@ rlc_putansi(RlcData b, int chr)
 	  b->shift_in = false;
 	  break;
 	default:
+	  if ( chr < 0x20 )		/* unhandled C0 control: ignore */
+	    break;			/* (e.g. \001/\002 from a bash PS0) */
 	  CMD(rlc_put(b, chr));
 	  break;
       }
