@@ -207,6 +207,21 @@ row_text(TI, Row, Text) :-
     get(S, value, A),
     normalize_space(atom(Text), A).
 
+%!  row_codes(+Terminal, +Row, -Codes) is det.
+%
+%   Codes of one row of the window, trailing blanks removed.  Unlike
+%   row_text/3 this shows anything on the screen that normalize_space/2
+%   would hide.
+
+row_codes(TI, Row, Codes) :-
+    get(TI, row, Row, S),
+    get(S, value, A),
+    atom_codes(A, All),
+    append(Codes, Blanks, All),
+    maplist(==(0' ), Blanks),
+    \+ append(_, [0' ], Codes),
+    !.
+
 %!  fill_window(+Terminal, -Blocks) is det.
 %
 %   Run enough commands to more than fill the window and leave the
@@ -352,6 +367,22 @@ test(output, [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
     get(B2, content, output, S2), text(S2, O2),
     assertion(O1 == 'out1-1\nout1-2\nout1-3\n'),
     assertion(O2 == 'out2-1\nout2-2\nout2-3\n').
+
+%  Bash turns the readline markers \[ and \] of PS0 into \001 and \002
+%  and writes PS0 verbatim, so the C mark arrives wrapped in them.  A
+%  terminal drops C0 controls it has no meaning for; printing them would
+%  put a glyph in front of every command's output.
+
+test(a_c0_control_is_not_printed,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    maplist(osc133, ['A','B','C','D'], [A,B,C,D]),
+    atomic_list_concat([A, '?- ', B, 'goal.\r\n',
+                        '\u0001', C, '\u0002', 'hello\r\n', D], Text),
+    send(TI, insert, Text),
+    assertion(row_codes(TI, 1, `hello`)),
+    blocks(TI, [Block]),
+    get(Block, content, output, S),
+    assertion(text(S, 'hello\n')).
 
 test(the_marks_are_a_method_that_can_be_sent,
      [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
