@@ -7442,14 +7442,18 @@ rlc_caret_down(RlcData b, int arg)
      */
   }
   b->changed |= CHG_CARET;
-					/* scroll? */
-  int row = rlc_count_lines(b, b->window_start, b->caret_y);
+					/* scroll?  In rows: a closed fold
+					   takes lines off the window and
+					   counting them scrolled a window
+					   that still had room for the
+					   caret */
+  int row = rlc_window_row(b, b->caret_y);
   if ( row >= b->window_size )
   { if ( b->saved.lines )
     { rlc_shift_up(b, row-(b->window_size-1));
       b->caret_y = rlc_add_lines(b, b->window_start, b->window_size-1);
     } else if ( !rlc_isearching(b) )	/* the user is driving the view */
-    { b->window_start = rlc_add_lines(b, b->caret_y, -(b->window_size-1));
+    { b->window_start = rlc_view_add(b, b->caret_y, -(b->window_size-1));
       b->changed |= CHG_CHANGED|CHG_CLEAR;
     }
   }
@@ -7640,12 +7644,17 @@ rlc_back_tabs(RlcData b, int count)
 
 static void
 rlc_set_caret(RlcData b, int x, int y)
-{ int cy = rlc_count_lines(b, b->window_start, b->caret_y);
+{ int cy = rlc_window_row(b, b->caret_y);
 
   y = Bounds(y, 0, b->window_size);
 
-  if ( y < cy )
-    b->caret_y = rlc_add_lines(b, b->window_start, y);
+  /* The client names a row of the window.  Counting lines put the caret
+   * in the text a closed fold hides, where what it wrote next never
+   * showed; below the last row there are no lines yet and no fold can
+   * be in the way, so getting there is a matter of adding them.
+   */
+  if ( y <= rlc_window_row(b, b->last) )
+    b->caret_y = rlc_view_add(b, b->window_start, y);
   else
     rlc_caret_down(b, y-cy);
 

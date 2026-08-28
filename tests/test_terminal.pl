@@ -2418,6 +2418,25 @@ test(alternate_screen_over_a_closed_fold,
     assertion(get(Block, folded, @on)),
     assertion(term_block_content(Block, command, 'one.')).
 
+test(writing_under_a_closed_fold_does_not_scroll,
+     [setup(current_test_terminal(T))]) :-
+    %  The window scrolls when the caret runs off its bottom row.  A
+    %  closed fold takes lines off the window, so counting lines rather
+    %  than rows scrolled a window that had room for the caret still,
+    %  and what was above the fold walked off the top.
+    folded_screen(T, _),
+    osc133_block(T, 'three.', [t4]),
+    assert_rows(T, [top, '?- one.', '?- two.', t1, t2, t3, '?- three.', t4]).
+
+test(placing_the_caret_over_a_closed_fold_counts_rows,
+     [setup(current_test_terminal(T))]) :-
+    %  CUP names a row of the window.  Counting lines put the caret in
+    %  the text a closed fold hides, where what the client wrote next
+    %  never showed up.
+    folded_screen(T, _),
+    out(T, '\e[3;1HXX'),                 % the third row holds `?- two.'
+    assert_rows(T, [top, '?- one.', 'XX two.', t1, t2, t3]).
+
 test(the_alternate_screen_gives_back_what_a_fold_hides,
      [setup(current_test_terminal(T))]) :-
     %  A fold hides text from the eye and not from the buffer: what is
