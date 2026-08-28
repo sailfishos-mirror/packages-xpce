@@ -6490,12 +6490,24 @@ test(repeat_types_the_command_again, [setup(test_begin(T))]) :-
     get(TI, block_popup, Popup),
     send(TI, update_block_popup, Popup, Gutter),
     send(TI, repeat_block),
-    drive(0.5),
     %  it is typed, not entered: the caret sits at the end of it
-    cursor(T, _, CRow),
-    get(TI, row, CRow, S), get(S, value, Line),
-    assertion(sub_atom(Line, _, _, _, 'format("again~n").')),
+    assertion(wait_until(tt_typed(T, 'format("again~n").'), 15)),
     tt_reset(T).
+
+%!  tt_typed(+T, +Text) is semidet.
+%
+%   True when the row the caret is on holds Text.  What is typed at the
+%   client is echoed a character at a time, and how long that takes is
+%   the client's business: it is a wait, not a fixed pause.
+%
+%   On Windows the pause it replaces was never long enough -- the input
+%   goes to the client over a pipe there and arrives a character to the
+%   dispatch round.
+
+tt_typed(T, Text) :-
+    cursor(T, _, Row),
+    row_text(T, Row, Line),
+    sub_atom(Line, _, _, _, Text).
 
 %!  tt_head_row(+T, +Block, -Row) is semidet.
 %
