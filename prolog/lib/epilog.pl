@@ -2178,6 +2178,24 @@ update_gui_debug(Frame, MI:menu_item) :->
     ;   true
     ).
 
+fold_previous(Frame) :->
+    "Toggle folding the previous command"::
+    get(Frame, current_terminal, Term),
+    get(Term, fold_previous, Old),
+    (   Old == @on
+    ->  New = @off
+    ;   New = @on
+    ),
+    send(Term, fold_previous, New).
+
+update_fold_previous(Frame, MI:menu_item) :->
+    "Update the fold previous command menu item"::
+    (   get(Frame, current_terminal, Term),
+        get(Term, fold_previous, Bool)
+    ->  send(MI, selected, Bool)
+    ;   true
+    ).
+
 epilog_prolog_flag(Frame, Flag, Value, Default) :-
     get(Frame, current_terminal, Term),
     terminal_prolog_flag(Term, Flag, Value, Default).
@@ -2248,7 +2266,11 @@ initialise(D) :->
               [ menu_item(user_init_file,
                           message(Epilog, preferences, prolog)),
                 menu_item('GUI_preferences',
-                          message(Epilog, preferences, xpce))
+                          message(Epilog, preferences, xpce),
+                          end_group := @on),
+                new(FoldPrevious,
+                    menu_item(fold_previous_command,
+                              message(Epilog, fold_previous)))
               ]),
     send_list(Tools, append,
               [ menu_item(navigator,
@@ -2321,7 +2343,11 @@ initialise(D) :->
     send(Debug, multiple_selection, @on),
     send(DebugMode, condition, message(Epilog, update_debug_mode, DebugMode)),
     send(TraceMode, condition, message(Epilog, update_trace_mode, TraceMode)),
-    send(GuiDebug,  condition, message(Epilog, update_gui_debug, GuiDebug)).
+    send(GuiDebug,  condition, message(Epilog, update_gui_debug, GuiDebug)),
+    send(Settings, show_current, @on),
+    send(Settings, multiple_selection, @on),
+    send(FoldPrevious, condition,
+         message(Epilog, update_fold_previous, FoldPrevious)).
 
 :- pce_end_class(epilog_dialog).
 
