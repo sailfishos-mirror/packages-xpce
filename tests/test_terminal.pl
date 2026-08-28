@@ -2343,6 +2343,93 @@ test(entering_the_alternate_screen_twice,
     normal_screen(T),
     assert_rows(T, [l1,l2,l3]).
 
+test(resizing_the_alternate_screen_rewraps_the_one_under_it,
+     [ setup(current_test_terminal(T)),
+       cleanup(( normal_screen(T), resize_cols(T, 80, _) ))
+     ]) :-
+    %  The normal screen is given back and taken again around the
+    %  resize, so that its lines are rewrapped with the rest of the
+    %  buffer rather than cut off at the new width in the copies they
+    %  were saved into.
+    term_cols(T, Cols0),
+    Len is Cols0-10,
+    length(Codes, Len),
+    maplist(=(0'x), Codes),
+    atom_codes(Long, Codes),
+    paint(T, [Long]),
+    alt_screen(T, 'ALT'),
+    Narrow is Cols0-20,
+    resize_cols(T, Narrow, Cols),
+    normal_screen(T),
+    sub_atom(Long, 0, Cols, _, Head),
+    sub_atom(Long, Cols, _, 0, Tail),
+    assert_rows(T, [Head, Tail]).
+
+%!  osc133_block(+T, +Command, +Lines) is det.
+%
+%   Write what a client that marks its prompts (OSC 133) writes for one
+%   command: the prompt, the line the user entered and the output it
+%   produced.  The terminal makes a terminal_block of the marks, and a
+%   block is what folds.
+
+osc133_block(T, Command, Lines) :-
+    out(T, ['\e]133;A\a?- \e]133;B\a', Command, '\r\n\e]133;C\a']),
+    forall(member(Line, Lines),
+           out(T, [Line, '\r\n'])),
+    out(T, '\e]133;D\a').
+
+%!  folded_screen(+T, -Block) is det.
+%
+%   Start the buffer over with a line and two commands on it, the first
+%   of them folded away.  Block is the folded one.  What matters is that
+%   it hides more lines than the window has rows: they are still under
+%   the window, and an application that takes it writes over them.  The
+%   line above it is what the window must go on showing.
+
+folded_screen(T, Block) :-
+    T = terminal(_, xpce(_, TI)),
+    send(TI, fold_previous, @off),      % what the class says; these
+                                        % tests fold by hand
+    out(T, '\e[3J\e[H\e[2J'),           % start the ring over
+    out(T, 'top\r\n'),
+    term_rows(T, Rows),
+    Hidden is Rows+5,
+    numbered_lines(1, Hidden, Long),
+    osc133_block(T, 'one.', Long),
+    osc133_block(T, 'two.', [t1,t2,t3]),
+    term_blocks(T, Blocks),
+    once(( member(Block, Blocks),
+           term_block_content(Block, command, 'one.')
+         )),
+    send(Block, fold).
+
+test(alternate_screen_over_a_closed_fold,
+     [setup(current_test_terminal(T))]) :-
+    %  The rows the alternate screen takes over and the lines it writes
+    %  over are not the same while a fold is closed.  Saving a row per
+    %  line gave back what the fold hid and dropped everything below it,
+    %  which is the screen `help/0' left behind.
+    folded_screen(T, Block),
+    Screen = [top, '?- one.', '?- two.', t1, t2, t3],
+    assert_rows(T, Screen),
+    alt_screen(T, 'ALT'),
+    normal_screen(T),
+    assert_rows(T, Screen),
+    assertion(get(Block, folded, @on)),
+    assertion(term_block_content(Block, command, 'one.')).
+
+test(the_alternate_screen_gives_back_what_a_fold_hides,
+     [setup(current_test_terminal(T))]) :-
+    %  A fold hides text from the eye and not from the buffer: what is
+    %  under it comes back with the screen it belongs to.
+    folded_screen(T, Block),
+    alt_screen(T, 'ALT'),
+    normal_screen(T),
+    assertion(\+ marker_on_screen(T, 'l30')),
+    send(Block, unfold),
+    assertion(marker_on_screen(T, 'l30')),
+    assertion(marker_on_screen(T, '?- two.')).
+
 :- end_tests(terminal_screen).
 
 

@@ -336,6 +336,7 @@ static void	rlc_caret_down(RlcData b, int arg);
 static void	rlc_init_tabs(RlcData b);
 static void	rlc_erase_display(RlcData b);
 static void	rlc_restore_screen(RlcData b);
+static void	rlc_save_screen(RlcData b);
 static void	rlc_update_scrollbar(RlcData b);
 static void	rlc_init_text_dimensions(RlcData b, FontObj f);
 static int	rlc_add_lines(RlcData b, int here, int add);
@@ -475,7 +476,13 @@ rlc_check_assertions(RlcData b)
 { int window_last = rlc_add_lines(b, b->window_start, b->window_size-1);
   int y;
 
-  assert(b->last != b->first || b->first == 0);
+  /* An empty buffer sits at the start of the ring: rlc_restart_buffer()
+   * is what empties one and it puts it there.  The alternate screen is
+   * the exception: it takes the window over where it stands, as the
+   * normal screen comes back to the very same slots, so the one line it
+   * starts from can be anywhere.
+   */
+  assert(b->last != b->first || b->first == 0 || rlc_alt_screen(b));
   assert(b->caret_x >= 0 && b->caret_x < LINE_CELL_CAPACITY(b));
 					/* TBD: debug properly */
 /*assert(rlc_between(b, b->window_start, window_last, b->caret_y));*/
@@ -6555,6 +6562,19 @@ rlc_resize(RlcData b, int w, int h)
 	Cprintf("Resizing %dx%d --> %dx%d\n",
 		b->width, b->window_size, w, h));
 
+  /* An alternate screen is up over lines we are about to rewrap.  Give
+   * the normal screen back first, so that it is rewrapped with the rest
+   * of the buffer and the blocks that name it follow their text, and
+   * take it again at the new size below.  The saved copies cannot be
+   * rewrapped where they are; the application redraws what it had on the
+   * screen when it sees the SIGWINCH this sends it.
+   */
+  bool alt = rlc_alt_screen(b);
+  if ( alt )
+  { rlc_erase_display(b);
+    rlc_restore_screen(b);
+  }
+
   rlc_textpos caret     = rlc_save_textpos(b, b->caret_y, b->caret_x);
   rlc_textpos sel_org   = rlc_save_textpos(b, b->sel_org_line,
 					      b->sel_org_char);
@@ -6676,12 +6696,19 @@ rlc_resize(RlcData b, int w, int h)
   rlc_restore_textpos(b, isheld_e,  &b->isearch.held_end_line,
 				    &b->isearch.held_end_char);
   rlc_restore_block_anchors(b, blocks, nblocks);
+  b->window_start = rlc_last_window_start(b);	/* in rows: the folds are
+						   back on the lines */
 
   /* Clamp caret_x: typing at 80 cols can leave caret_x up to 80 in
    * the pending-wrap position; after shrinking to 25 cols the cap
    * is 3*25+1 = 76 and rlc_check_assertions would otherwise abort. */
   if ( b->caret_x > LINE_CELL_CAPACITY(b) - 1 )
     b->caret_x = LINE_CELL_CAPACITY(b) - 1;
+
+  if ( alt )				/* the application gets its screen */
+  { rlc_save_screen(b);			/* back at the new size */
+    rlc_erase_display(b);
+  }
 
   b->changed |= CHG_CARET|CHG_CHANGED|CHG_CLEAR;
 
@@ -7737,7 +7764,11 @@ rlc_restart_buffer(RlcData b)
 
 static void
 rlc_erase_saved_lines(RlcData b)
-{ if ( b->last == b->window_start )
+{ if ( rlc_alt_screen(b) )		/* the scroll back is the normal
+					   screen's, and this one has none */
+    return;
+
+  if ( b->last == b->window_start )
   { int row = rlc_window_row(b, b->caret_y);
 
     rlc_restart_buffer(b);
@@ -7771,15 +7802,24 @@ rlc_erase_display(RlcData b)
   rlc_free_line(b, b->window_start);
   b->last = b->window_start;
 
-  if ( b->first == b->window_start )	/* no saved lines: start over */
-    rlc_restart_buffer(b);		/* this is what `cls' hit: ED 3
+  if ( rlc_alt_screen(b) )
+  { /* The erase of an application on the alternate screen, over lines the
+     * normal screen is coming back to.  Starting the ring over would move
+     * them and sweeping would let go of the blocks that name them; only
+     * the folds go, having nothing left to hide.
+     */
+    rlc_restamp_folds(b);
+  } else
+  { if ( b->first == b->window_start )	/* no saved lines: start over */
+      rlc_restart_buffer(b);		/* this is what `cls' hit: ED 3
 					 * leaves no saved lines, so ED 2
 					 * takes this branch and the
 					 * banner of the session came
 					 * back with the next prompt
 					 * written over it. */
-  rlc_sweep_blocks(b);			/* the marks on the lines it erased
+    rlc_sweep_blocks(b);		/* the marks on the lines it erased
 					   have nothing left to name */
+  }
 
   b->changed |= CHG_CHANGED|CHG_CLEAR|CHG_CARET;
 
@@ -8466,12 +8506,26 @@ rlc_copy_line(RlcTextLine dst, const RlcTextLine src)
     dst->links = rlc_copy_links(src->links);
 }
 
+/** Save the window the alternate screen takes over.
+ *
+ * What the application takes over is the rows of the window; what it
+ * writes over is the lines under them, and those are not the same
+ * number: a closed fold hides lines the window does not show and the
+ * erase below takes them away with the rest.  So the span is measured in
+ * rows and saved in lines.  Saving `window_size' lines instead gave back
+ * what the folds hid and dropped the rows below it, which is the screen
+ * a `help/0' left behind on a session with a folded command on it.
+ *
+ * The blocks that name these lines stay: rlc_erase_display() does not
+ * sweep them while the alternate screen is up, so their anchors name the
+ * same slots again once the lines come back and the folds close again.
+ */
+
 static void
 rlc_save_screen(RlcData b)
 { rlc_destroy_saved_screen(b);
-  int lines = rlc_count_lines(b, b->window_start, b->last);
-  if ( lines > b->window_size )
-    lines = b->window_size;
+  int lines = rlc_count_lines(b, b->window_start,
+			      rlc_view_add(b, b->window_start, b->window_size));
   b->saved.height = lines;
   b->saved.lines = rlc_malloc(sizeof(rlc_text_line) * lines);
   b->saved.caret_x = b->caret_x;
@@ -8495,7 +8549,8 @@ rlc_restore_screen(RlcData b)
     b->saved.height = 0;
 
     for(int i=0; i<count; i++)
-    { if ( i < b->window_size )
+    { if ( i < b->height-1 )		/* it came out of the ring, so it
+					   fits; only a shrink could not */
       { rlc_free_line(b, line);
 	RlcTextLine nl = &b->lines[line];
 	*nl = tls[i];
@@ -8520,8 +8575,11 @@ rlc_restore_screen(RlcData b)
     }
     b->caret_x = Bounds(b->saved.caret_x, 0, b->width-1);
     b->caret_y = rlc_add_lines(b, b->window_start,
-			       Bounds(b->saved.caret_y, 0, b->window_size));
-    rlc_restamp_folds(b);		/* the lines under them came back */
+			       Bounds(b->saved.caret_y, 0, count));
+    rlc_sweep_blocks(b);		/* the folds close again over the lines
+					   that came back; a block below the
+					   window, whose lines the erase took
+					   away, goes */
   }
 }
 
@@ -9121,6 +9179,12 @@ promptMarkTerminalImage(TerminalImage ti, Name kind, BoolObj continuation)
 
   if ( !b )
     fail;
+  if ( rlc_alt_screen(b) )
+    succeed;				/* What an application on the
+					   alternate screen marks is not a
+					   command of the client, and the
+					   lines it would name are given
+					   back when the screen is. */
   tb = rlc_last_block(b);
   a  = tb ? tb->anchors : NULL;
 
