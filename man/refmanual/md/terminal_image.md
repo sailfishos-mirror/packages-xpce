@@ -166,6 +166,23 @@ keystrokes and hovered hyperlinks.
 - terminal_image->event: event
     Top-level event dispatcher.
 
+- terminal_image->input_focus: bool
+    The terminal gained (@on) or lost (@off) the keyboard focus.  This
+    is called from `->event` on the `activate_keyboard_focus` and
+    `deactivate_keyboard_focus` events.  The default implementation
+    enables or disables the platform text input (the input method),
+    stops an incremental search -- it lives off the keyboard --, updates
+    the caret and, if the client asked to be told about the focus
+    (`CSI ? 1004 h`), sends it `CSI I` or `CSI O`.
+
+    A subclass may refine this to react on the terminal gaining or
+    losing the focus.  A refinement should call the super method to keep
+    the above in sync.
+
+    Note that this is not `graphical->keyboard_focus`, which works the
+    other way around: it asks the window to give the focus to this
+    object.
+
 - terminal_image->typed: event
     Process a single keystroke.  This takes these steps:
 

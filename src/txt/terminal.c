@@ -963,6 +963,42 @@ rlc_fold_at_gutter(TerminalImage ti, int x, int y)
 }
 
 
+/* ->input_focus: bool
+ *
+ * The terminal gained (@on) or lost (@off) the keyboard focus.  This is
+ * called from ->event on the activate_keyboard_focus and
+ * deactivate_keyboard_focus events.  It may be refined to react on focus
+ * changes.  A refinement should call the super method to keep the caret,
+ * the platform text input state and the client's focus in/out reporting
+ * (CSI ? 1004 h) in sync.
+ */
+
+static status
+inputFocusTerminalImage(TerminalImage ti, BoolObj val)
+{ RlcData b = ti->data;
+
+  if ( val == ON )
+  { ws_enable_text_input((Graphical)ti, ON);
+    b->has_focus = true;
+    if ( b->focus_inout_events )
+    { const char *focus_in = S_ESC"[I";
+      rlc_send(b, focus_in, strlen(focus_in));
+    }
+  } else
+  { ws_enable_text_input((Graphical)ti, OFF);
+    b->has_focus = false;
+    endIsearchTerminalImage(ti, ON);	/* it lives off the keyboard */
+    if ( b->focus_inout_events )
+    { const char *focus_out = S_ESC"[O";
+      rlc_send(b, focus_out, strlen(focus_out));
+    }
+  }
+  changed_caret(b);
+
+  succeed;
+}
+
+
 static status
 eventTerminalImage(TerminalImage ti, EventObj ev)
 { if ( ev->id == NAME_locMove )
@@ -1002,24 +1038,12 @@ eventTerminalImage(TerminalImage ti, EventObj ev)
     succeed;
 
   if ( isAEvent(ev, NAME_focus) )
-  { RlcData b = ti->data;
-    if ( isAEvent(ev, NAME_activateKeyboardFocus) )
-    { ws_enable_text_input((Graphical)ti, ON);
-      b->has_focus = true;
-      if ( b->focus_inout_events )
-      { const char *focus_in = S_ESC"[I";
-	rlc_send(b, focus_in, strlen(focus_in));
-      }
-    } else if ( isAEvent(ev, NAME_deactivateKeyboardFocus) )
-    { ws_enable_text_input((Graphical)ti, OFF);
-      b->has_focus = false;
-      endIsearchTerminalImage(ti, ON);	/* it lives off the keyboard */
-      if ( b->focus_inout_events )
-      { const char *focus_out = S_ESC"[O";
-	rlc_send(b, focus_out, strlen(focus_out));
-      }
-    }
-    changed_caret(b);
+  { if ( isAEvent(ev, NAME_activateKeyboardFocus) )
+      send(ti, NAME_inputFocus, ON, EAV);
+    else if ( isAEvent(ev, NAME_deactivateKeyboardFocus) )
+      send(ti, NAME_inputFocus, OFF, EAV);
+    else
+      changed_caret(ti->data);
 
     succeed;
   }
@@ -3593,6 +3617,8 @@ static senddecl send_terminal_image[] =
      NAME_event, "Test if ready to accept input (true)"),
   SM(NAME_event, 1, "event", eventTerminalImage,
      NAME_event, "Handle a general event"),
+  SM(NAME_inputFocus, 1, "bool", inputFocusTerminalImage,
+     NAME_event, "The terminal gained or lost the keyboard focus"),
   SM(NAME_typed, 1, "event", typedTerminalImage,
      NAME_event, "Process a keystroke"),
   SM(NAME_insertSelf, 1, "char", insertSelfTerminalImage,
