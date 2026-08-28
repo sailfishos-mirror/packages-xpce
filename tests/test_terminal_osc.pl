@@ -446,6 +446,27 @@ test(erasing_the_display_lets_go_of_what_it_erased,
     get(Fresh, content, output, S), text(S, Out),
     assertion(Out == 'out1-1\nout1-2\nout1-3\n').
 
+test(erasing_below_the_caret_lets_go_of_what_it_erased,
+     [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
+    %  ED 0 from the top of the window destroys the same lines as ED 2,
+    %  but leaves the caret's own line in the buffer: a block can keep
+    %  its prompt and lose the mark that closed it.  It cannot say how
+    %  far it reaches any more, so it must go with the rest.  This is
+    %  the `cl' of a client on Windows, where libedit's built-in termcap
+    %  clears the screen with CUP home + ED 0.
+    session(TI, 2),
+    blocks(TI, Before),
+    assertion(Before \== []),
+    send(TI, insert, '\e[H\e[J'),       % caret home, erase below it
+    blocks(TI, After),
+    assertion(After == []),
+    session(TI, 1),
+    screen(TI, Rows),
+    assertion(memberchk('out1-1', Rows)),
+    blocks(TI, [Fresh|_]),
+    get(Fresh, content, output, S), text(S, Out),
+    assertion(Out == 'out1-1\nout1-2\nout1-3\n').
+
 test(a_command_does_not_include_the_return_that_entered_it,
      [setup(terminal(TI)), cleanup(destroy_terminal(TI))]) :-
     session(TI, 1),

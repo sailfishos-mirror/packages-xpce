@@ -7961,6 +7961,12 @@ rlc_clear_from_cursor(RlcData b)
     b->first = 0;
     b->last = 0;
   }
+  rlc_sweep_blocks(b);			/* the lines below the caret are
+					 * gone; a block that lived only
+					 * there has nothing left to name.
+					 * This is the `cl' of a Windows
+					 * client: libedit's fake termcap
+					 * clears with CUP home + ED 0. */
   b->changed |= CHG_CHANGED|CHG_CLEAR|CHG_CARET;
 }
 
@@ -8996,7 +9002,36 @@ rlc_expire_blocks(RlcData b, int dying)
 }
 
 
-/** Let go of the blocks whose lines have all left the buffer.  The
+/** Is there still a block here?
+ *
+ * Two ways for one to end.  Everything it named is gone, which is the
+ * plain case.  Or it still names a line but no longer the mark that
+ * closed it: an erase takes the lines below the caret and leaves the
+ * ones above, so a block can keep its prompt and lose its end.  It
+ * cannot say how far it reaches any more, and a mark that is gone is
+ * not a mark that never arrived -- that is a command still running,
+ * which reaches to the caret.  See block_range().
+ */
+
+static bool
+block_alive(RlcData b, TerminalBlock tb)
+{ RlcAnchors a = tb->anchors;
+
+  if ( !a )
+    return false;
+
+  if ( !block_anchor(b, a->prompt_line) && !block_anchor(b, a->input_line) &&
+       !block_anchor(b, a->output_line) && !block_anchor(b, a->end_line) )
+    return false;
+
+  if ( a->end_line != ANCHOR_NONE && !block_anchor(b, a->end_line) )
+    return false;
+
+  return true;
+}
+
+
+/** Let go of the blocks whose lines have left the buffer.  The
  * incremental path above sees every line that is recycled; this is for
  * the wholesale ones, where the scroll-back is dropped in one go.
  */
@@ -9013,11 +9048,8 @@ rlc_sweep_blocks(RlcData b)
   gone = answerObject(ClassChain, EAV);
   for_cell(cl, ti->blocks)
   { TerminalBlock tb = cl->value;
-    RlcAnchors a = tb->anchors;
 
-    if ( !a ||
-	 (!block_anchor(b, a->prompt_line) && !block_anchor(b, a->input_line) &&
-	  !block_anchor(b, a->output_line) && !block_anchor(b, a->end_line)) )
+    if ( !block_alive(b, tb) )
       appendChain(gone, tb);
   }
 
