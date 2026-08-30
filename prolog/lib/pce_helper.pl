@@ -48,7 +48,7 @@
            , sformat/3
            ]).
 
-resource(help,  image, image('32x32/help.png')).
+resource(help,  image, image('tool/help.svg')).
 
 :- pce_global(@helper, new(helper)).
 :- pce_global(@finder, new(finder)).

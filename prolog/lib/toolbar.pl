@@ -47,8 +47,8 @@ the tool_bar.
 
 Below is a typical example:
 
-resource(printer,       image,  image('16x16/print.png')).
-resource(floppy,        image,  image('16x16/save.png')).
+resource(printer,       image,  image('tool/print.svg')).
+resource(floppy,        image,  image('tool/save.svg')).
 
 :- pce_begin_class(myapp, frame).
 

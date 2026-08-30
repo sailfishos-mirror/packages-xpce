@@ -596,9 +596,9 @@ make_fragment(Pos, Fragment) :-
 :- use_module(library(hyper)).
 :- use_module(library(toolbar)).
 
-resource(save,    image, image('16x16/save.png')).
+resource(save,    image, image('tool/save.svg')).
 resource(replace, image, image('16x16/redo.png')).
-resource(undo,    image, image('16x16/undo.png')).
+resource(undo,    image, image('tool/undo.svg')).
 
 :- pce_begin_class(change_fragment, fragment,
                    "Indicate suggested change").

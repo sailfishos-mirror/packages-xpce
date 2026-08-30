@@ -40,9 +40,9 @@
 
 :- pce_autoload(tool_bar, library(toolbar)).
 
-resource(open,      image, image('16x16/open.png')).
+resource(open,      image, image('tool/open.svg')).
 resource(saveall,   image, image('16x16/saveall.png')).
-resource(help,      image, image('16x16/help.png')).
+resource(help,      image, image('tool/help.svg')).
 resource(bookmarks, image, image('16x16/bookmarks.png')).
 
 :- pce_begin_class(emacs_buffer_menu, persistent_frame,
