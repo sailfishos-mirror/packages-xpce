@@ -11,6 +11,21 @@ set(HAVE_GUI ON)
 if(HAVE_GUI)
 
 if(APPLE)
+  # Cocoa headers use blocks, nullability and instancetype, which only
+  # Clang understands, so the Objective-C part must be built by Clang
+  # even when the rest of the system is built by, say, MacPorts GCC.
+  # CMake would otherwise default CMAKE_OBJC_COMPILER to CMAKE_C_COMPILER.
+  # The C/Objective-C boundary in src/sdl/sdlnsmenu.h is plain C, so
+  # mixing the two compilers is safe.
+  if(NOT CMAKE_OBJC_COMPILER)
+    execute_process(COMMAND xcrun --find clang
+		    OUTPUT_VARIABLE XCRUN_CLANG
+		    OUTPUT_STRIP_TRAILING_WHITESPACE
+		    ERROR_QUIET)
+    if(XCRUN_CLANG)
+      set(CMAKE_OBJC_COMPILER ${XCRUN_CLANG})
+    endif()
+  endif()
   enable_language(OBJC)
 endif()
 
