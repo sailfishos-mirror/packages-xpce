@@ -291,7 +291,6 @@ fill_dialog(Draw, D:dialog) :->
             message(Selection?head, instance_of, connection))),
     new(NonEmptyDrawing, not(message(Canvas?graphicals, empty))),
     new(HasCurrentFile, Canvas?file \== @nil),
-    new(HasMetaFile, ?(@pce, convert, win_metafile, class)),
 
     send(D, append, new(MB, menu_bar(actions))),
 
@@ -415,7 +414,6 @@ fill_dialog(Draw, D:dialog) :->
                           message(Canvas, paste),
                           @default, @on,
                           message(@prolog, exists_clipboard))
-              , new(ClipBoard, popup(clipboard))
               , menu_item(import_image,
                           message(Canvas, import_image),
                           @default, @on)
@@ -427,20 +425,6 @@ fill_dialog(Draw, D:dialog) :->
                               message(Canvas, clear, @on)),
                           @default, @off,
                           NonEmptyDrawing)
-              ]),
-
-    send(ClipBoard, end_group, @on),
-    send(ClipBoard?context, condition, HasMetaFile),
-    send_list(ClipBoard, append,
-              [ menu_item(clip_drawing,
-                          message(Canvas, export_win_metafile, drawing),
-                          condition := NonEmptyDrawing),
-                menu_item(clip_selection,
-                          message(Canvas, export_win_metafile, selection),
-                          condition := NonEmptySelection,
-                          end_group := @on),
-                menu_item(paste,
-                          message(Canvas, import_win_metafile))
               ]),
 
     send(S, multiple_selection, @on),

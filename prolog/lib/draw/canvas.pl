@@ -516,51 +516,6 @@ paste(Canvas, At:[point]) :->
     ;   send(Canvas, report, warning, 'Draw Clipboard is empty')
     ).
 
-                 /*******************************
-                 *       WINDOWS CLIPBOARD      *
-                 *******************************/
-
-map_format(aldus, wmf) :- !.
-map_format(Fmt, Fmt).
-
-export_win_metafile(Canvas, What:[{selection,drawing}], Format:[{wmf,emf}]) :->
-    "Export to the Windows clipboard"::
-    send(Canvas, keyboard_focus, @nil),
-    default(What, selection, TheWhat),
-    (   Format == @default
-    ->  get_config(draw_config:file/meta_file_format, TheFormat0),
-        map_format(TheFormat0, TheFormat)
-    ;   TheFormat = Format
-    ),
-    get(Canvas, selection, OldSelection),
-    send(Canvas, selection, @nil),
-    (   TheWhat == selection
-    ->  Graphs = OldSelection
-    ;   get(Canvas, graphicals, Graphs)
-    ),
-    new(MF, win_metafile),
-    send(MF, draw_in, Graphs),
-    send(@display, selection_owner, MF,
-         primary,                   % which
-         @receiver,                 % fetch object
-         message(@receiver, free),  % loose selection
-         TheFormat),
-    send(Canvas, selection, OldSelection),
-    send(Canvas, report, status, 'Put %s on clipboard', TheWhat).
-
-import_win_metafile(Canvas) :->
-    "Get selection as picture and import it"::
-    (   get(Canvas?display, selection,
-            primary, win_metafile, win_metafile, MF)
-    ->  new(DMF, draw_metafile),
-        send(DMF, copy, MF),
-        send(Canvas, display, DMF),
-        free(MF),
-        send(Canvas, report, status, 'Imported metafile')
-    ;   send(Canvas, report, warning, 'Could not get clipboard data')
-    ).
-
-
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 The method below  duplicates the selection  and displays the duplicate
 at  an   optionally specified  offset.   There  are  various difficult
@@ -927,11 +882,6 @@ save(Canvas, File:[file]) :->
     (   get_config(draw_config:file/save_postscript_on_save, @on)
     ->  send(Canvas, postscript),
         send(Which, append, '+ps')
-    ;   true
-    ),
-    (   get_config(draw_config:file/save_metafile_on_save, @on)
-    ->  send(Canvas, save_default_windows_metafile),
-        send(Which, append, '+mf')
     ;   true
     ),
     send(Canvas, report, status, 'Saved (%s) %s',
