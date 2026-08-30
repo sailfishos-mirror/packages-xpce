@@ -85,11 +85,10 @@ print_canvas(Canvas) :-
 
 
 print_command(Canvas, Command:name) :<-
-    "Get name of the printer"::
+    "Ask the user for the command that prints the job"::
     get(Canvas, frame, Frame),
-    default_printer(DefPrinter),
     get(Canvas, print_command_template, CmdTempl),
-    print_cmd(CmdTempl, DefPrinter, Cmd),
+    print_cmd(CmdTempl, Cmd),
     new(D, dialog(print_command?label_name)),
     send(D, append, new(P, text_item(print_command, Cmd))),
     send(D, append, button(cancel, message(D, return, @nil))),
@@ -102,29 +101,29 @@ print_command(Canvas, Command:name) :<-
     Answer \== @nil,
     Command = Answer.
 
-default_printer(Printer) :-
-    get(@pce, environment_variable, 'PRINTER', Printer),
-    !.
-default_printer(postscript).
-
-
 print_job_name(_, Job) :<-
     "Default name of the printer job"::
     Job = 'XPCE/SWI-Prolog'.
 
 print_command_template(_, Command) :<-
     "Default command to send a job to the printer"::
-    Command = 'lpr -P%p'.
+    (   get(@pce, environment_variable, 'PRINTER', _)
+    ->  Command = 'lpr -P%p'
+    ;   Command = 'lpr'                 % lpr(1) uses the default queue
+    ).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-print_cmd(+Template, +Printer, +File,  -Command)   determines  the shell
-command to execute in order to get `File' printed on `Printer' using the
-given template. The substitutions are handled by a regex object.
+print_cmd(+Template, -Command) determines the shell command to execute in
+order to get the job printed, replacing `%p' in Template by the printer
+named by $PRINTER.  The substitutions are handled by a regex object.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-print_cmd(Template, Printer, Cmd) :-
+print_cmd(Template, Cmd) :-
     new(S, string('%s', Template)),
-    substitute(S, '%p', Printer),
+    (   get(@pce, environment_variable, 'PRINTER', Printer)
+    ->  substitute(S, '%p', Printer)
+    ;   true
+    ),
     get(S, value, Cmd),
     free(S).
 
