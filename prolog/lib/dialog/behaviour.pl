@@ -1364,8 +1364,7 @@ initialise(O, Name:name) :->
     get(O, label_font, Font),
     send(O, display, new(B, box(W, H))),
     send(B, name, shape),
-    ifcolour(send(O, elevation, @dia_component_elevation),
-             send(O, background, @grey25_image)),
+    send(O, elevation, @dia_component_elevation),
     send(O, display, new(T, editable_text(Name, center, Font))),
     send(T, background, colour(white)),
     send(T, name, text),
@@ -2117,13 +2116,3 @@ user(Goal) :-
     yesno(Goal, RVal),
     forall(user_error(Error), send(error(Error), slot, feedback, print)),
     RVal.
-
-                 /*******************************
-                 *            COLOUR            *
-                 *******************************/
-
-ifcolour(IfColour, IfMono) :-
-    (   get(@display, visual_type, monochrome)
-    ->  IfMono
-    ;   IfColour
-    ).
