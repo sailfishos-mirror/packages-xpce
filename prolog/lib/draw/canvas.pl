@@ -35,6 +35,7 @@
 :- module(draw_canvas, []).
 
 :- use_module(library(pce)).
+:- use_module(library(print_graphics)).
 :- use_module(align).
 :- require([ add_config/2
            , chain_list/2
@@ -43,7 +44,6 @@
            , forall/2
            , get_config/2
            , ignore/1
-           , pce_shell_command/1
            , send_list/3
            ]).
 
@@ -86,6 +86,7 @@ NOTE:   Should we  define  the  type  of the attribute_editor   to  be
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 :- pce_begin_class(draw_canvas, picture, "Drawing plane of PceDraw").
+:- use_class_template(print_graphics).
 
 variable(mode,             name,                        get,
          "Current mode of operation").
@@ -879,9 +880,9 @@ save(Canvas, File:[file]) :->
     send(Canvas, slot, modified, @off),
     send(Sheet, free),
     new(Which, string('pd')),
-    (   get_config(draw_config:file/save_postscript_on_save, @on)
-    ->  send(Canvas, postscript),
-        send(Which, append, '+ps')
+    (   get_config(draw_config:file/save_pdf_on_save, @on)
+    ->  send(Canvas, export_pdf),
+        send(Which, append, '+pdf')
     ;   true
     ),
     send(Canvas, report, status, 'Saved (%s) %s',
@@ -1084,84 +1085,9 @@ default_file(Canvas, Ext:[name], DefName:name) :<-
     ).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Print  the image to the default  printer.  Also this  method should be
-extended by requesting additional parameters from the user.
+->print and ->save_pdf come from the print_graphics template, which
+renders the canvas to PDF and hands the result to the print spooler.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-print(Canvas) :->
-    "Send to default printer"::
-    print_canvas(Canvas).
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Printing is not yet supported in XPCE 7.  The Windows specific code has
-been removed as it will not be restored.  The Unix code is still there.
-It should be updated to use PDF and drive CUPS.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-print_canvas(Canvas) :-
-    get(Canvas, default_printer, Printer),
-    new(PsFile, file),
-    send(PsFile, open, write),
-    send(PsFile, append, Canvas?postscript),
-    send(PsFile, append, 'showpage\n'),
-    send(PsFile, close),
-    get(PsFile, absolute_path, File),
-    get_config(draw_config:print/print_command, CmdTempl),
-    print_cmd(CmdTempl, Printer, File, Cmd),
-    pce_shell_command('/bin/sh'('-c', Cmd)),
-    send(PsFile, remove),
-    send(PsFile, done),
-    send(Canvas, report, status, 'Sent to printer `%s''', Printer).
-
-
-default_printer(Canvas, Printer:name) :<-
-    "Get name of the printer"::
-    get(Canvas, frame, Draw),
-    default_printer(Draw, DefPrinter),
-    new(D, dialog('PceDraw: printer?')),
-    send(D, append, new(P, text_item(printer, DefPrinter))),
-    send(D, append, button(cancel, message(D, return, @nil))),
-    send(D, append, button(ok, message(D, return, P?selection))),
-    send(D, default_button, ok),
-    send(D, transient_for, Draw),
-    send(D, modal, transient),
-    get(D, confirm_centered, Canvas?frame?area?center, Answer),
-    send(D, destroy),
-    Answer \== @nil,
-    Printer = Answer.
-
-default_printer(_, Printer) :-
-    get_config(draw_config:print/printer, Printer0),
-    Printer0 \== @default,
-    !,
-    (   get(Printer0, scan, '$%[a-zA-Z0-9_]', vector(VarName)),
-        get(@pce, environment_variable, VarName, Printer)
-    ->  true
-    ;   Printer = Printer0
-    ).
-default_printer(_, Printer) :-
-    get(@pce, environment_variable, 'PRINTER', Printer),
-    !.
-default_printer(_, postscript).
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-print_cmd(+Template, +Printer, +File,  -Command)   determines  the shell
-command to execute in order to get `File' printed on `Printer' using the
-given template. The substitutions are handled by a regex object.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-print_cmd(Template, Printer, File, Cmd) :-
-    new(S, string('%s', Template)),
-    substitute(S, '%p', Printer),
-    substitute(S, '%f', File),
-    get(S, value, Cmd),
-    free(S).
-
-substitute(S, F, T) :-
-    new(R, regex(F)),
-    send(R, for_all, S,
-         message(@arg1, replace, @arg2, T)),
-    free(R).
 
 
                 /********************************

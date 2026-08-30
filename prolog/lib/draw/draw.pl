@@ -328,10 +328,10 @@ fill_dialog(Draw, D:dialog) :->
                           message(Canvas, export_pdf_as),
                           @default, @off,
                           NonEmptyDrawing)
-%              , menu_item('print (Control+P)',
-%                          message(Canvas, print),
-%                          @default, @on,
-%                          NonEmptyDrawing)
+              , menu_item('print (Control+P)',
+                          message(Canvas, print),
+                          @default, @on,
+                          NonEmptyDrawing)
               , menu_item(new_window,
                           message(Draw, new_window),
                           end_group := @on)
@@ -475,9 +475,9 @@ fill_toolbar(_D, TB:tool_bar) :->
                 tool_button(save,
                             resource(save),
                             save),
-%                tool_button(print,
-%                            resource(print),
-%                            print),
+                tool_button(print,
+                            resource(print),
+                            print),
                 gap,
                 tool_button(cut_selection,
                             resource(cut),
