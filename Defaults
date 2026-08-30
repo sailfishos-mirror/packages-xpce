@@ -1,9 +1,4 @@
-! XPCE 5.0 Class Variable defaults for colour and monochrome displays
-! Author: Jan Wielemaker, University of Amsterdam
-! Modified: Tue Dec  7 14:15:04 1999
-!	Added alias for symbol-font
-! Modified: Jan 6, 2005
-!	Use internationalised fonts
+! XPCE Class Variable defaults
 !
 ! See README.customise before changing this file.
 
@@ -24,10 +19,6 @@ font.system_fonts:	[ normal    := font(sans, normal, 12), \
 			  itt       := font(mono, italic, 14), \
 			  bitt      := font(mono, italic, 14, bold)  \
 			]
-
-! This one is often slow on colour displays.  Prefer the beep then.
-
-*.visual_bell:		when(@colour_display, @off, @on)
 
 ! Set this to @on if you want searching in the editor to be case-sensitive
 ! by default.

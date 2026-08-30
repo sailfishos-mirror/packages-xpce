@@ -1,4 +1,5 @@
-! Skeleton preferences file for XPCE.  This file is loaded from pce(Defaults).
+! Skeleton user preferences file for XPCE.  This file provides some
+! commonly used preferences as comments.
 !
 ! Format:
 !
@@ -28,6 +29,7 @@
 !				       colour(blue2),colour(magenta3),colour(cyan3),colour(gray90), \
 !				       colour(gray50),colour(red),colour(green),colour(yellow),     \
 !				       colour(blue),colour(magenta),colour(cyan),colour(white))
+!prolog_terminal.fold_previous: @on
 
 ! Basic style for keyboard accelerators.  On Windows the default is `cua'.
 ! (Common User Access), on Unix the default is `emacs'.  You can overrule
@@ -153,3 +155,10 @@
 
 !font.scale: 1.2
 
+! Highlight Unicode combining marks.  These can result from lacking NFC
+! normalization or from Unicode characters that can only be created using
+! combining marks.  Mixing NFC and NFD text can lead to unexpected equality
+! (unification) failures.
+
+!editor.nfd_style: style(background := '#fff0a0')
+!terminal_image.nfd_style: style(background := '#fff0a0')
