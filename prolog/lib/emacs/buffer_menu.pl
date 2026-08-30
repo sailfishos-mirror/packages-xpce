@@ -44,7 +44,6 @@ resource(open,      image, image('16x16/open.png')).
 resource(saveall,   image, image('16x16/saveall.png')).
 resource(help,      image, image('16x16/help.png')).
 resource(bookmarks, image, image('16x16/bookmarks.png')).
-resource(buffers,   image, image('32x32/buffers.png')).
 
 :- pce_begin_class(emacs_buffer_menu, persistent_frame,
                    "List showing all PceEmacs buffers").
@@ -55,7 +54,6 @@ initialise(BM, Emacs:emacs) :->
     "Create menu for buffer-list"::
     send(BM, send_super, initialise,
          'PCE Emacs Buffers', application := Emacs),
-    send(BM, icon, resource(buffers)),
     send(BM, name, buffer_menu),
     send(BM, append, new(D, dialog)),
     send(D, pen, 0),
