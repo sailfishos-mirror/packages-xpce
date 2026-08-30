@@ -254,8 +254,8 @@ getConvertFile(Class class, Name name)
 
 status
 closeFile(FileObj f)
-{ if ( f->status != NAME_closed )
-  { status rval = checkErrorFile(f);
+{ if ( f->fd )				/* <-status may not be initialised */
+  { status rval = checkErrorFile(f);	/* if ->initialise failed */
 
     Sclose(f->fd);
     f->fd = NULL;

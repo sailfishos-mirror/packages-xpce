@@ -234,6 +234,7 @@ updateInstanceProtoClass(Class class)
   class->proto = alloc(offsetof(struct instance_proto, proto) + size);
   class->proto->size = size;
   obj = (Instance) &class->proto->proto;
+  memset(obj, 0, size);			/* clear the non-slot C fields */
   initHeaderObj(obj, class);
 
   field = &obj->slots[0];
@@ -291,6 +292,7 @@ again:
     int i;
 
     obj = alloc(size);
+    memset(obj, 0, size);		/* clear the non-slot C fields */
     initHeaderObj(obj, class);
 
     for (i = 0; i < slots; i++)
