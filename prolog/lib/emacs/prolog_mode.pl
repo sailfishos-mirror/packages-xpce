@@ -1511,7 +1511,10 @@ pce_check_require(M, File:file) :->
     ->  true
     ;   get(File, name, Name),
         send(M, report, status, 'Checking %s', Name),
-        send(M, synchronise),
+        (   get(M, window, W)
+        ->  send(W, flush)
+        ;   true
+        ),
         auto_call(pce_require(Name, _Directive, Message)),
         (   send(Message, sub, 'up-to-date')
         ->  true
