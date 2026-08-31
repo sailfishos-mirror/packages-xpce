@@ -1665,12 +1665,19 @@ updateCursorWindow(PceWindow sw)
 
 status
 geometryWindow(PceWindow sw, Int X, Int Y, Int W, Int H)
-{ CHANGING_GRAPHICAL(sw,
+{ /* A window may be empty.  We used to force 1x1 because some drivers
+   * rejected a zero-sized window, but an XPCE window is our own
+   * artifact -- only the frame is a window of the window system --
+   * so nothing below us cares.  Keeping the size at 0 lets an empty
+   * window (e.g. a dialog holding only a natively displayed
+   * menu_bar) collapse instead of claiming a visible strip.
+   */
+  CHANGING_GRAPHICAL(sw,
 		     { setArea(sw->area, X, Y, W, H);
-		       if ( valInt(sw->area->w) <= 0 )
-			 assign(sw->area, w, ONE);
-		       if ( valInt(sw->area->h) <= 0 )
-			 assign(sw->area, h, ONE);
+		       if ( valInt(sw->area->w) < 0 )
+			 assign(sw->area, w, ZERO);
+		       if ( valInt(sw->area->h) < 0 )
+			 assign(sw->area, h, ZERO);
 		     });
 
   int x, y, w, h;

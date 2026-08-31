@@ -144,7 +144,8 @@ ws_geometry_window(PceWindow sw, int x, int y, int w, int h, int pen)
       wsw->h = h*scale;
       cairo_surface_destroy(wsw->backing);
       wsw->backing = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
-						wsw->w,  wsw->h);
+						max(wsw->w, 1),
+						max(wsw->h, 1));
       assert(wsw->backing);
       d_init_surface(wsw->backing, sw->background);
       if ( wsw->texture )

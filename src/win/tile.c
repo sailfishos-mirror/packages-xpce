@@ -674,8 +674,15 @@ setTile(TileObj t, Int x, Int y, Int w, Int h)
 		pp(t), pp(x), pp(y), pp(w), pp(h));
 	Cprintf("enforced = %s\n", pp(t->enforced)));
 
-  if ( notDefault(w) && valInt(w) < valInt(t->border)) w = t->border;
-  if ( notDefault(h) && valInt(h) < valInt(t->border)) h = t->border;
+  /* Give a tile at least the border as its size, so it cannot become
+   * too small to resize.  A size of exactly 0 means there is nothing to
+   * show, though: keep that, or an empty window (e.g. a dialog holding
+   * only a natively displayed menu_bar) still claims a visible strip.
+   */
+  if ( notDefault(w) && valInt(w) > 0 && valInt(w) < valInt(t->border) )
+    w = t->border;
+  if ( notDefault(h) && valInt(h) > 0 && valInt(h) < valInt(t->border) )
+    h = t->border;
 
   if ( notDefault(w) )
   { assign(t, idealWidth, w);
@@ -804,11 +811,42 @@ enforceTile(TileObj t, BoolObj val)
 }
 
 
+/* A member that has no ideal size and cannot stretch will be laid out
+ * with size 0.  Such a member must not get a separating border either,
+ * or it contributes a visible gap while showing nothing.  This happens
+ * for a dialog holding only a menu_bar that is displayed natively (see
+ * ws_has_native_menubar()): without this the frame shows a double
+ * border above its content.
+ */
+
+static int
+non_empty_tiles(TileObj t)
+{ Cell cell;
+  int n = 0;
+
+  for_cell(cell, t->members)
+  { TileObj t2 = cell->value;
+
+    if ( t->orientation == NAME_horizontal )
+    { if ( valInt(t2->idealWidth) > 0 || valInt(t2->horStretch) > 0 )
+	n++;
+    } else
+    { if ( valInt(t2->idealHeight) > 0 || valInt(t2->verStretch) > 0 )
+	n++;
+    }
+  }
+
+  return n;
+}
+
+
 static status
 layoutTile(TileObj t, Int ax, Int ay, Int aw, Int ah)
 { int border = valInt(t->border);
-  int borders = (isNil(t->members) ? 0 : valInt(getSizeChain(t->members))-1);
+  int nvis = isNil(t->members) ? 0 : non_empty_tiles(t);
+  int borders = nvis > 0 ? nvis-1 : 0;
   int x, y, w, h;
+  bool placed = false;
 
   assign(t, enforced, ON);
 
@@ -857,8 +895,12 @@ layoutTile(TileObj t, Int ax, Int ay, Int aw, Int ah)
     for_cell(cell, t->members)
     { TileObj t2 = cell->value;
 
+      if ( sp->size > 0 && placed )
+	x += border;
       layoutTile(t2, toInt(x), toInt(y), toInt(sp->size), toInt(h));
-      x += sp->size + border;
+      x += sp->size;
+      if ( sp->size > 0 )
+	placed = true;
       sp++;
     }
   } else /*if ( t->orientation == NAME_vertical )*/
@@ -884,8 +926,12 @@ layoutTile(TileObj t, Int ax, Int ay, Int aw, Int ah)
     for_cell(cell, t->members)
     { TileObj t2 = cell->value;
 
+      if ( sp->size > 0 && placed )
+	y += border;
       layoutTile(t2, toInt(x), toInt(y), toInt(w), toInt(sp->size));
-      y += sp->size + border;
+      y += sp->size;
+      if ( sp->size > 0 )
+	placed = true;
       sp++;
     }
   }
