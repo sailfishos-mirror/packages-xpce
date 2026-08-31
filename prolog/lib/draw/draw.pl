@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        jan@swi-prolog.org
     WWW:           https://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  1985-2025, University of Amsterdam
+    Copyright (c)  1985-2026, University of Amsterdam
                               SWI-Prolog Solutions b.v.
     All rights reserved.
 
@@ -420,6 +420,9 @@ fill_dialog(Draw, D:dialog) :->
               , menu_item(import_frame,
                           message(Canvas, import_frame),
                           @default, @on)
+              , menu_item(copy_as_prolog_source,
+                          message(Canvas, copy_as_prolog_source),
+                          @default, @on)
               , menu_item(clear,
                           and(message(Draw, select_mode),
                               message(Canvas, clear, @on)),
@@ -451,11 +454,13 @@ fill_dialog(Draw, D:dialog) :->
         send(Canvas, auto_align_mode, @on)
     ;   true
     ),
-    send(D, append, new(DDD, draw_drag_drawing), right),
-    send(DDD, reference, point(0, 10)),
-    send(DDD, alignment, right),
-    send(D, resize_message, message(D, layout, @arg2)).
-
+    (   get(MB, native, @on)
+    ->  true
+    ;   send(D, append, new(DDD, draw_drag_drawing), right),
+        send(DDD, reference, point(0, 10)),
+        send(DDD, alignment, right),
+        send(D, resize_message, message(D, layout, @arg2))
+    ).
 
 exists_clipboard :-
     object(@draw_clipboard).

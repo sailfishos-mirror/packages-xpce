@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        jan@swi-prolog.org
     WWW:           https://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  1985-2002, University of Amsterdam
+    Copyright (c)  1985-2026, University of Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -37,16 +38,12 @@
 :- use_module(library(pce)).
 :- use_module(library(print_graphics)).
 :- use_module(align).
-:- require([ add_config/2
-           , chain_list/2
-           , default/3
-           , file_name_extension/3
-           , forall/2
-           , get_config/2
-           , ignore/1
-           , send_list/3
-           ]).
-
+:- autoload(exportpl, [describe_drawing/2]).
+:- autoload(library(lists), [delete/3]).
+:- autoload(library(pce_config), [get_config/2]).
+:- autoload(library(pce_config), [set_config/2]).
+:- autoload(library(pce_util), [send_list/3, default/3, chain_list/2]).
+:- autoload(library(pprint), [print_term/2]).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Class `draw_canvas' defines  the actual drawing  area.  Representing a
@@ -658,6 +655,24 @@ clear(Canvas, Confirm:[bool]) :->
     send(Canvas, slot, modified, @off),
     send(Canvas?undo_buffer, clear),
     send(Canvas, update_attribute_editor).
+
+copy_as_prolog_source(Canvas) :->
+    "Copy a Prolog term"::
+    get(Canvas, prolog_source, String),
+    send(@display, copy, String),
+    send(Canvas, report, status, 'Drawing exported to clipboard').
+
+prolog_source(Canvas, Source:string) :<-
+    describe_drawing(Canvas, DrawingTerm),
+    new(TB, text_buffer),
+    setup_call_cleanup(
+        pce_open(TB, write, Fd),
+        print_term(DrawingTerm,
+                   [ output(Fd)
+                   ]),
+        close(Fd)),
+    get(TB, contents, Source),
+    free(TB).
 
 
                 /********************************

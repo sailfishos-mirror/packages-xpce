@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        jan@swi-prolog.org
     WWW:           https://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  1997-2011, University of Amsterdam
+    Copyright (c)  1997-2026, University of Amsterdam
+                              SWI-Prolog Solutions b.v.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -39,7 +40,6 @@
 :- use_module(library(apply)).
 :- use_module(library(lists)).
 :- use_module(library(pce_util)).
-:- autoload(library(pprint)).
 
 :- pce_autoload(drag_and_drop_gesture, library(dragdrop)).
 
@@ -329,25 +329,11 @@ event(DD, Ev:event) :->
     ;   send(DD, send_super, event, Ev)
     ).
 
-prolog_source(DD, Source:string) :<-
-    get(DD, frame, Draw),
-    get(Draw, canvas, Canvas),
-    describe_drawing(Canvas, DrawingTerm),
-    new(TB, text_buffer),
-    setup_call_cleanup(
-        pce_open(TB, write, Fd),
-        print_term(DrawingTerm,
-                   [ output(Fd)
-                   ]),
-        close(Fd)),
-    get(TB, contents, Source),
-    free(TB).
-
 copy(DD) :->
     "Export drawing in the selection"::
-    get(DD, prolog_source, String),
-    send(@display, copy, String),
-    send(DD, report, status, 'Drawing exported to clipboard').
+    get(DD, frame, Draw),
+    get(Draw, canvas, Canvas),
+    send(Canvas, copy_as_prolog_source).
 
 give_help(_) :->
     "Jump to help-page"::
