@@ -928,6 +928,13 @@ clear_screen(PT) :->
     send(PT, insert, "\e[3J\e[H\e[2J\e[3J\r"),
     send(PT, send, "\f").               % Ctrl-L: re-prompt.
 
+undo(PT) :->
+    "Undo the last change to the line being edited"::
+    %  libedit binds undo to ^_ (and to ^Z while it is reading a line).
+    %  Command-Z is the MacOS way to ask for it, so hand the program on
+    %  the terminal the key it understands.
+    send(PT, send, "\u001f").
+
 interrupt(PT) :->
     "Interrupt the process running in this terminal"::
     (   send_super(PT, interrupt)       % external process: the tty signals it

@@ -115,7 +115,8 @@ binding(apple, terminal,
           '\\s-='     = font_magnify
         ]).
 binding(apple, epilog,
-        [ '\\S-\\s-d' = split_horizontally,
+        [ '\\s-z'     = undo,
+          '\\S-\\s-d' = split_horizontally,
           '\\s-d'     = split_vertically,
           '\\s-n'     = new_window,
           '\\s-k'     = clear_screen,
