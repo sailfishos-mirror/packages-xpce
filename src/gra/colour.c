@@ -705,7 +705,7 @@ static senddecl send_colour[] =
      DEFAULT, "Create from name and optional rgb"),
   SM(NAME_unlink, 0, NULL, unlinkColour,
      DEFAULT, "Deallocate the colour object"),
-  SM(NAME_equal, 1, "colour", equalColour,
+  SM(NAME_equal, 1, "any", equalColour,
      DEFAULT, "Test if colours have equal RGB")
 };
 
