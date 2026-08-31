@@ -10309,8 +10309,14 @@ status
 receiveTerminalImage(TerminalImage ti)
 { char buf[PTY_READ_CHUNK+MAX_INCOMPLETE];
   RlcData b = ti->data;
+  ssize_t count;
 
-  ssize_t count = read(b->pty.master_fd, buf+MAX_INCOMPLETE, PTY_READ_CHUNK);
+  /* The watcher thread has already read this; see watch_fill().  Doing
+     the read here would make the main thread the only drainer of the
+     pty, so a main-thread write that fills it could never complete. */
+  count = read_watch(b->pty.watch, buf+MAX_INCOMPLETE, PTY_READ_CHUNK);
+  if ( count < 0 )
+    succeed;				/* nothing buffered right now */
   if ( count == 0 && rlc_reclaim_pty(b) )
     succeed;				/* revoked rather than closed */
   return processClientOutputTerminalImage(ti, buf+MAX_INCOMPLETE, count);
