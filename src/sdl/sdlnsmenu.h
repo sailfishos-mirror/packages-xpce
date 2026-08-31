@@ -68,6 +68,8 @@
 typedef struct
 { char		title[256];	/* UTF-8 label */
   char		key[32];	/* UTF-8 key equivalent, "" if none */
+  char		shortcut[64];	/* accelerator we cannot register as a key
+				   equivalent, to show as plain text */
   unsigned	modifiers;	/* PCE_MOD_* mask for <-key */
   int		kind;		/* PCE_MI_* */
   bool		enabled;	/* menu_item<-active */

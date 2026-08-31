@@ -248,6 +248,7 @@ utf8_put(char *out, size_t len, unsigned int code)
 static bool
 parse_accelerator(const char *s, char *key, size_t keylen, unsigned *modp)
 { unsigned mods = 0;
+  bool fkey = false;			/* F1..F12: safe to take bare */
 
   if ( !s )
     return false;
@@ -275,11 +276,6 @@ parse_accelerator(const char *s, char *key, size_t keylen, unsigned *modp)
   if ( !s[0] )
     return false;
 
-  /* An auto-assigned mnemonic is a bare "\ex"; there is no Alt-letter
-   * menu navigation on MacOS, so drop those. */
-  if ( mods == PCE_MOD_OPTION && strlen(s) == 1 )
-    return false;
-
 					/* function keys */
   if ( (s[0] == 'F' || s[0] == 'f') && isdigit((unsigned char)s[1]) )
   { char *e;
@@ -288,15 +284,72 @@ parse_accelerator(const char *s, char *key, size_t keylen, unsigned *modp)
     if ( *e == 0 && n >= 1 && n <= 12 )
     { if ( !utf8_put(key, keylen, (unsigned int)(NS_F1_KEY + n - 1)) )
 	return false;
+      fkey = true;
       goto done;
     }
   }
 
+  /* Named keys.  characterName() writes them between angle brackets,
+   * e.g. `<cursor_left>', and key_binding<-accelerator_label turns that
+   * into a glyph on MacOS, so accept both.  MacOS spells these in the
+   * Unicode private use area and NSMenuItem draws the usual glyph.
+   */
+  { static const struct { const char *name; unsigned int code; } fkeys[] =
+      { { "<cursor_up>",    0xF700 },	/* NSUpArrowFunctionKey */
+	{ "↑",		    0xF700 },
+	{ "<cursor_down>",  0xF701 },
+	{ "↓",		    0xF701 },
+	{ "<cursor_left>",  0xF702 },
+	{ "←",		    0xF702 },
+	{ "<cursor_right>", 0xF703 },
+	{ "→",		    0xF703 },
+	{ "<cursor_home>",  0xF729 },	/* NSHomeFunctionKey */
+	{ "↖",		    0xF729 },
+	{ "<end>",	    0xF72B },	/* NSEndFunctionKey */
+	{ "↘",		    0xF72B },
+	{ "<page_up>",	    0xF72C },
+	{ "⇞",		    0xF72C },
+	{ "<page_down>",    0xF72D },
+	{ "⇟",		    0xF72D },
+	{ NULL, 0 }
+      };
+    int i;
+
+    for(i=0; fkeys[i].name; i++)
+    { if ( strcmp(s, fkeys[i].name) == 0 )
+      { if ( !utf8_put(key, keylen, fkeys[i].code) )
+	  return false;
+	goto done;
+      }
+    }
+  }
+
+  if ( s[0] == '<' )
+  { if ( (s[1] == 'f' || s[1] == 'F') && isdigit((unsigned char)s[2]) )
+    { char *e;
+      long n = strtol(s+2, &e, 10);
+
+      if ( strcmp(e, ">") == 0 && n >= 1 && n <= 12 )
+      { if ( !utf8_put(key, keylen, (unsigned int)(NS_F1_KEY + n - 1)) )
+	  return false;
+	fkey = true;
+	goto done;
+      }
+    }
+
+    return false;			/* some other named key */
+  }
+
+  /* Both the bare name characterName() writes and the glyph
+   * key_binding<-accelerator_label turns it into on MacOS.
+   */
   { static const struct { const char *name; char chr; } named[] =
-      { { "RET", '\r' }, { "Return", '\r' }, { "TAB", '\t' },
-	{ "Tab", '\t' }, { "SPC", ' ' }, { "Space", ' ' },
-	{ "BS", '\b' }, { "Backspace", '\b' }, { "DEL", 0x7f },
-	{ "Delete", 0x7f }, { "ESC", 0x1b }, { "Escape", 0x1b },
+      { { "RET", '\r' }, { "Return", '\r' }, { "↩", '\r' },
+	{ "TAB", '\t' }, { "Tab", '\t' }, { "⇥", '\t' },
+	{ "SPC", ' ' },   { "Space", ' ' },  { "␣", ' ' },
+	{ "BS", '\b' },   { "Backspace", '\b' }, { "⌫", '\b' },
+	{ "DEL", 0x7f },  { "Delete", 0x7f }, { "⌦", 0x7f },
+	{ "ESC", 0x1b },  { "Escape", 0x1b }, { "⎋", 0x1b },
 	{ NULL, 0 }
       };
     int i;
@@ -318,15 +371,30 @@ parse_accelerator(const char *s, char *key, size_t keylen, unsigned *modp)
     goto done;
   }
 
+  key[0] = 0;
   return false;				/* not understood; no shortcut */
 
 done:
-  if ( mods & PCE_MOD_CONTROL )		/* offer Control as Command */
+  /* A Control accelerator is offered to MacOS as Command, which is
+   * additive: the Control keystroke still reaches XPCE.  But when the
+   * accelerator already uses Command the Control is part of the key --
+   * Control-Command-Left is not Command-Left -- so keep both.
+   */
+  if ( (mods & PCE_MOD_CONTROL) && !(mods & PCE_MOD_COMMAND) )
   { mods &= ~PCE_MOD_CONTROL;
     mods |= PCE_MOD_COMMAND;
   }
-  if ( !(mods & PCE_MOD_COMMAND) )	/* bare keys stay with XPCE */
+  /* Command or Option means the accelerator is a real XPCE binding we
+   * can hand to MacOS: routing it through the menu runs the same
+   * command.  A function key is safe to take bare, as it is not text
+   * input.  Anything else -- a bare or merely shifted key -- would be
+   * taken from ordinary typing, so leave it to XPCE and let the caller
+   * show it as text.
+   */
+  if ( !(mods & (PCE_MOD_COMMAND|PCE_MOD_OPTION)) && !fkey )
+  { key[0] = 0;				/* we got as far as writing one */
     return false;
+  }
 
   *modp = mods;
   return true;
@@ -496,8 +564,17 @@ pce_popup_item(void *popup, int i, pce_menu_item *out)
   { out->kind = PCE_MI_NORMAL;
 
     if ( isName(mi->accelerator) )
-      parse_accelerator(nameToUTF8(mi->accelerator),
-			out->key, sizeof(out->key), &out->modifiers);
+    { const char *acc = nameToUTF8(mi->accelerator);
+
+      if ( !parse_accelerator(acc, out->key, sizeof(out->key),
+			      &out->modifiers) )
+      { /* Not a keystroke MacOS can attach to the item: a two-key
+	   sequence such as `^X ^S', or a key we will not take from the
+	   editor.  Show it as text so the binding is still visible. */
+	strncpy(out->shortcut, acc, sizeof(out->shortcut)-1);
+	out->shortcut[sizeof(out->shortcut)-1] = 0;
+      }
+    }
   }
 
   return true;

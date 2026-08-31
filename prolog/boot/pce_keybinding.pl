@@ -336,6 +336,50 @@ key_name('\\e',  '\u2009Alt-').
 key_name('\\S-', '\u2009Shift-').
 key_name('\\s-', '\u2009Super-').
 
+%       Named keys, which characterName() writes between angle
+%       brackets.  Without these the menu shows e.g. `Ctrl-<cursor_left>'.
+
+:- if(current_prolog_flag(apple, true)).
+key_name('<cursor_left>',  '\u2190').
+key_name('<cursor_right>', '\u2192').
+key_name('<cursor_up>',    '\u2191').
+key_name('<cursor_down>',  '\u2193').
+key_name('<cursor_home>',  '\u2196').
+key_name('<end>',          '\u2198').
+key_name('<page_up>',      '\u21DE').
+key_name('<page_down>',    '\u21DF').
+:- endif.
+key_name('<cursor_left>',  'Left').
+key_name('<cursor_right>', 'Right').
+key_name('<cursor_up>',    'Up').
+key_name('<cursor_down>',  'Down').
+key_name('<cursor_home>',  'Home').
+key_name('<end>',          'End').
+key_name('<page_up>',      'PageUp').
+key_name('<page_down>',    'PageDown').
+
+%       Keys characterName() writes as a bare uppercase name.
+
+:- if(current_prolog_flag(apple, true)).
+key_name('RET', '\u21A9').
+key_name('TAB', '\u21E5').
+key_name('SPC', '\u2423').
+key_name('BS',  '\u232B').
+key_name('DEL', '\u2326').
+key_name('ESC', '\u238B').
+:- endif.
+key_name('RET', 'Return').
+key_name('TAB', 'Tab').
+key_name('SPC', 'Space').
+key_name('BS',  'Backspace').
+key_name('DEL', 'Delete').
+key_name('ESC', 'Esc').
+
+key_name(Key, Name) :-                  % <f1> ... <f12>
+    between(1, 12, N),
+    atomic_list_concat(['<f', N, '>'], Key),
+    atomic_list_concat(['F', N], Name).
+
 %!  capitalise_key(+Post0, -Post)
 %
 %   Given we matched  a  modifier   sequence,  capitalise  the  modified

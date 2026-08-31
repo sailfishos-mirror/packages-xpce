@@ -210,6 +210,17 @@ ns_modifiers(unsigned mods)
  * `popup->update', so menu_item<-active is current.
  */
 
+/* An accelerator MacOS cannot own -- a two-key sequence like `^X ^S',
+ * or one we will not take from the editor -- is still worth showing.
+ * It goes in the title, after the label.
+ *
+ * Not as the key equivalent: AppKit draws only the first character of a
+ * multi-character one.  Nor as a right-aligned attributed title: that
+ * sits at a tab stop of ours while AppKit right-aligns the real key
+ * equivalents in a column of its own, which gives a menu two columns of
+ * accelerators.
+ */
+
 /* A pull-right is filled here rather than left to its own
  * -menuNeedsUpdate:, so that its key equivalents are live before the
  * menu has ever been opened.  MAX_DEPTH guards against a popup that
@@ -233,7 +244,13 @@ populate_menu(NSMenu *menu, void *mb, void *popup, int depth)
     if ( !pce_popup_item(popup, i, &pmi) )
       continue;
 
-    NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:utf8(pmi.title)
+    NSString *title = utf8(pmi.title);
+
+    if ( pmi.shortcut[0] && !pmi.key[0] )
+      title = [NSString stringWithFormat:@"%@   %@",
+			title, utf8(pmi.shortcut)];
+
+    NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:title
 					 action:NULL
 					 keyEquivalent:@""];
     [mi setEnabled:pmi.enabled ? YES : NO];
@@ -269,7 +286,7 @@ populate_menu(NSMenu *menu, void *mb, void *popup, int depth)
       if ( pmi.key[0] )
       { [mi setKeyEquivalent:utf8(pmi.key)];
 	[mi setKeyEquivalentModifierMask:ns_modifiers(pmi.modifiers)];
-      }
+      }						/* else: in the title */
     }
 
     [menu addItem:mi];
