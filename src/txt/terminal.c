@@ -399,6 +399,11 @@ static bool	rlc_foreground_directory(RlcData b, char *buf, size_t size);
 static int	rlc_interrupt_char(RlcData b);
 static int	rlc_suspend_char(RlcData b);
 static bool	rlc_caret_to_click(RlcData b, int x, int y);
+static void	rlc_caret_to(RlcData b, int line, int chr);
+static int	rlc_cluster_distance(RlcData b, int l1, int c1,
+				     int l2, int c2);
+static bool	rlc_selection_in_input(RlcData b, int *sl, int *sc,
+				       int *el, int *ec);
 static void	rlc_resize_pty(RlcData b, int cols, int rows);
 static void	rlc_translate_mouse(RlcData b, int x, int y,
 				   int *line, int *chr);
@@ -1251,6 +1256,16 @@ typedTerminalImage(TerminalImage ti, EventObj ev)
        typedKeyBinding(ti->bindings, ev, (Graphical)ti) )
     succeed;
 
+  /* Backspace or Delete with a selection in the line being edited takes
+   * the selection, as it would in any editor, rather than one character
+   * next to the caret.  ->delete_selection fails when the selection is
+   * elsewhere on the screen, and the key then does its usual work.
+   */
+  if ( (ev->id == NAME_BS || ev->id == NAME_DEL ||
+	ev->id == NAME_delete) &&
+       send(ti, NAME_deleteSelection, EAV) )
+    succeed;
+
   if ( isInteger(ev->id) )
   { chr = valInt(ev->id);
   } else if ( ev->id == NAME_BS )
@@ -1297,9 +1312,18 @@ typedTerminalImage(TerminalImage ti, EventObj ev)
   }
 
   if ( seq )
-    rlc_send(ti->data, seq, strlen(seq));
-  else
+  { rlc_send(ti->data, seq, strlen(seq));
+  } else
+  { /* Typing over a selection replaces it, as it would in any editor.
+     * Only for a character that inserts itself: a control key is a
+     * command, and the meta keys became a sequence above.
+     * ->delete_selection declines a selection that is not in the input,
+     * so this costs nothing anywhere else on the screen.
+     */
+    if ( chr >= ' ' && chr != DEL )
+      send(ti, NAME_deleteSelection, EAV);
     typed_char(ti->data, chr);
+  }
 
   succeed;
 }
@@ -2372,7 +2396,14 @@ pasteTerminalImage(TerminalImage ti, Name which)
   const char *bsm_start = S_ESC"[200~";
   const char *bsm_end = S_ESC"[201~";
 
-  clearSelectionTerminalImage(ti);
+  /* A clipboard paste replaces the selection, as it would in any
+   * editor.  Not a primary one: that is the middle-click paste, whose
+   * selection is the text being pasted -- deleting it would turn the
+   * copy into a move.  ->delete_selection declines a selection outside
+   * the input, and clears it either way.
+   */
+  if ( which != NAME_clipboard || !send(ti, NAME_deleteSelection, EAV) )
+    clearSelectionTerminalImage(ti);
   DEBUG(NAME_paste, Cprintf("Paste %zd bytes from %s\n", ulen, pp(which)));
   if ( ti->data->bracketed_paste_mode )
     rlc_send(ti->data, bsm_start, strlen(bsm_start));
@@ -2491,6 +2522,82 @@ copyOrInterruptTerminalImage(TerminalImage ti)
 { if ( send(ti, NAME_copy, NAME_clipboard, EAV) )
     succeed;
   return send(ti, NAME_interrupt, EAV);
+}
+
+
+/* ->delete_selection
+ *	Delete the selection, if it lies inside the line being edited.
+ *	Fails otherwise, so that a key bound to this can fall through to
+ *	whatever it normally does; the rest of the screen is output and
+ *	cannot be taken back.
+ *
+ *	As with a click that moves the caret, the program on the terminal
+ *	does the work: we walk its caret to the end of the selection and
+ *	then hand it one delete per grapheme cluster.
+ */
+
+static status
+deleteSelectionTerminalImage(TerminalImage ti)
+{ RlcData b = ti->data;
+  int sl, sc, el, ec, n, i;
+
+  if ( !rlc_selection_in_input(b, &sl, &sc, &el, &ec) )
+    fail;
+
+  if ( (n=rlc_cluster_distance(b, sl, sc, el, ec)) > 0 )
+  { rlc_caret_to(b, el, ec);
+    for(i=0; i<n; i++)
+      rlc_send(b, "\177", 1);		/* DEL: ->delete_prev_char */
+  }
+
+  rlc_set_selection(b, 0, 0, 0, 0);
+  succeed;
+}
+
+
+/* ->cua_key_as_prefix: event
+ *	Is ^X (or ^C) the prefix key it usually is, rather than cut?
+ *	Answers the question keybinding.c asks for `prefix_or_cut', and
+ *	mirrors editor->cua_key_as_prefix: a prefix unless there is
+ *	something here to take and the user stops at the one key.  We ask
+ *	for a selection in the input, not just any selection, since that
+ *	is all ->cut can act on.
+ */
+
+static status
+cuaKeyAsPrefixTerminalImage(TerminalImage ti, EventObj ev)
+{ int sl, sc, el, ec;
+
+  if ( instanceOfObject(ev, ClassEvent) &&
+       (valInt(ev->buttons) & BUTTON_shift) )
+    succeed;
+
+  if ( !rlc_selection_in_input(ti->data, &sl, &sc, &el, &ec) )
+    succeed;
+
+  if ( ws_wait_for_key(250) )		/* another key follows: a prefix */
+    succeed;
+
+  fail;
+}
+
+
+/* ->cut
+ *	Copy the selection and delete it.  Only inside the line being
+ *	edited: a cut that quietly did no more than copy would be worse
+ *	than a key that does nothing.
+ */
+
+static status
+cutTerminalImage(TerminalImage ti)
+{ RlcData b = ti->data;
+  int sl, sc, el, ec;
+
+  if ( !rlc_selection_in_input(b, &sl, &sc, &el, &ec) )
+    fail;
+
+  return send(ti, NAME_copy, NAME_clipboard, EAV) &&
+	 send(ti, NAME_deleteSelection, EAV);
 }
 
 static status
@@ -3654,6 +3761,12 @@ static senddecl send_terminal_image[] =
      NAME_appearance, "Show the output of every command again"),
   SM(NAME_selectAll, 0, NULL, selectAllTerminalImage,
      NAME_selection, "Select all text in the buffer"),
+  SM(NAME_deleteSelection, 0, NULL, deleteSelectionTerminalImage,
+     NAME_selection, "Delete the selection if it is in the input"),
+  SM(NAME_cut, 0, NULL, cutTerminalImage,
+     NAME_selection, "Copy and delete the selection in the input"),
+  SM(NAME_cuaKeyAsPrefix, 1, "event|event_id", cuaKeyAsPrefixTerminalImage,
+     NAME_event, "Is ^X a prefix rather than cut?"),
   SM(NAME_selection, 2, T_selection, selectionTerminalImage,
      NAME_selection, "Make [from, to) the selection"),
   SM(NAME_scrollTo, 1, "index=int", scrollToTerminalImage,
@@ -4238,11 +4351,35 @@ rlc_input_start(RlcData b, int line, int *sl, int *sc)
 }
 
 
+/* rlc_caret_to()
+ *	Walk the caret of the line being edited to (line, chr) by handing
+ *	the client cursor keys.  We do not move it ourselves: the program
+ *	on the terminal owns the line, and only it knows what a step
+ *	across a grapheme cluster costs.
+ */
+
+static void
+rlc_caret_to(RlcData b, int line, int chr)
+{ const char *seq;
+  int n, i;
+
+  if ( rlc_sel_lt(b, line, chr, b->caret_y, b->caret_x) )
+  { n = rlc_cluster_distance(b, line, chr, b->caret_y, b->caret_x);
+    seq = b->app_escape ? S_ESC"OD" : S_ESC"[D";
+  } else
+  { n = rlc_cluster_distance(b, b->caret_y, b->caret_x, line, chr);
+    seq = b->app_escape ? S_ESC"OC" : S_ESC"[C";
+  }
+
+  for(i=0; i<n; i++)
+    rlc_send(b, seq, strlen(seq));
+}
+
+
 static bool
 rlc_caret_to_click(RlcData b, int x, int y)
-{ int line, chr, n, i;
+{ int line, chr;
   int sl, sc;
-  const char *seq;
 
   if ( !rlc_editing_line(b) )		/* nobody is editing a line */
     return false;
@@ -4258,16 +4395,64 @@ rlc_caret_to_click(RlcData b, int x, int y)
     chr  = sc;				/* the start of the input */
   }
 
-  if ( rlc_sel_lt(b, line, chr, b->caret_y, b->caret_x) )
-  { n = rlc_cluster_distance(b, line, chr, b->caret_y, b->caret_x);
-    seq = b->app_escape ? S_ESC"OD" : S_ESC"[D";
+  rlc_caret_to(b, line, chr);
+
+  return true;
+}
+
+
+/* rlc_logical_end()
+ *	The last position of the logical line `line' is part of: the end
+ *	of the text on the last of its soft-wrapped rows.
+ */
+
+static void
+rlc_logical_end(RlcData b, int line, int *el, int *ec)
+{ while ( line != b->last && b->lines[line].softreturn )
+    line = NextLine(b, line);
+
+  *el = line;
+  *ec = b->lines[line].size;
+}
+
+
+/* rlc_selection_in_input()
+ *	Is the selection entirely inside the line being edited?  If so,
+ *	answer its range, ordered.  Only then may we delete it: anything
+ *	else on the screen is output, which we cannot take back.
+ */
+
+static bool
+rlc_selection_in_input(RlcData b, int *sl, int *sc, int *el, int *ec)
+{ int isl, isc, lel, lec;
+
+  if ( !rlc_editing_line(b) || !rlc_has_selection(b) )
+    return false;
+
+  if ( rlc_sel_lt(b, b->sel_start_line, b->sel_start_char,
+		     b->sel_end_line, b->sel_end_char) )
+  { *sl = b->sel_start_line; *sc = b->sel_start_char;
+    *el = b->sel_end_line;   *ec = b->sel_end_char;
   } else
-  { n = rlc_cluster_distance(b, b->caret_y, b->caret_x, line, chr);
-    seq = b->app_escape ? S_ESC"OC" : S_ESC"[C";
+  { *sl = b->sel_end_line;   *sc = b->sel_end_char;
+    *el = b->sel_start_line; *ec = b->sel_start_char;
   }
 
-  for(i=0; i<n; i++)
-    rlc_send(b, seq, strlen(seq));
+					/* one logical line, the one we
+					   are editing */
+  if ( rlc_logical_start(b, *sl) != rlc_logical_start(b, b->caret_y) ||
+       rlc_logical_start(b, *el) != rlc_logical_start(b, b->caret_y) )
+    return false;
+
+					/* at or after the prompt */
+  if ( !rlc_input_start(b, *sl, &isl, &isc) ||
+       rlc_sel_lt(b, *sl, *sc, isl, isc) )
+    return false;
+
+					/* not past the end of the text */
+  rlc_logical_end(b, b->caret_y, &lel, &lec);
+  if ( rlc_sel_lt(b, lel, lec, *el, *ec) )
+    return false;
 
   return true;
 }

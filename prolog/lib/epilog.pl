@@ -488,7 +488,7 @@ class_variable(fold_previous, bool, @off,
 %   key_binding object.
 
 binding('\\C-y',     paste_quoted).
-binding('\\C-x',     prefix).
+binding('\\C-x',     prefix_or_cut).  % cut when there is a selection
 binding('\\C-x8',    prefix).
 binding('\\C-x8RET', insert_symbol).
 binding('\\C-x8s',   insert_symbol).
@@ -500,6 +500,7 @@ binding('\\C-\\S-w', close).
 binding('\\C-\\S-m', make).
 binding('\\C-\\S-v', paste).
 binding('\\C-\\S-c', copy).
+binding('\\C-\\S-x', cut).           % only inside the input
 binding('\\C--',     font_reduce).
 binding('\\C-=',     font_default).
 binding('\\C-\\S-h', toggle_fold).       % hide the output

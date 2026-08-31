@@ -107,6 +107,7 @@ binding(apple, 'emacs$fundamental',
 binding(apple, terminal,
         [ '\\C-c'     = interrupt,
           '\\s-c'     = copy,
+          '\\s-x'     = cut,
           '\\s-v'     = paste,
           '\\s-a'     = select_all,
 
