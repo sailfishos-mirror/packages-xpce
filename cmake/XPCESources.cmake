@@ -71,7 +71,14 @@ set(WIN_SRC	browser.c decorate.c dialog.c display.c
 
 set(SDL_SRC	sdl.c sdldisplay.c sdlfont.c sdlmenu.c sdlwindow.c
 		sdlcolour.c sdldraw.c sdlframe.c sdlstream.c sdlinput.c
-		sdlcursor.c  sdlevent.c    sdlimage.c  sdltimer.c)
+		sdlcursor.c  sdlevent.c    sdlimage.c  sdltimer.c
+		sdlmenubar.c)
+if(APPLE)
+  # The Cocoa half of the native menu bar.  It must be a separate
+  # translation unit: in Objective-C `Class' is a builtin type, so
+  # XPCE's `typedef struct class * Class' would be silently ignored.
+  list(APPEND SDL_SRC sdlnsmenu.m)
+endif()
 if(WIN32)
   set(MSW_SRC	mswin.c msprocess.c msuxnt.c mscolour.c)
 else()

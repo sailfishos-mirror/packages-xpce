@@ -679,6 +679,8 @@ sdl_frame_event(SDL_Event *ev)
       }
       case SDL_EVENT_WINDOW_FOCUS_GAINED:
       { PceWindow sw = ws_grabbing_window();
+
+	ws_menubar_activate_frame(fr);	/* show this frame's native menu */
 	if ( sw )
 	{ FrameObj fr2 = getFrameWindow(sw, OFF);
 

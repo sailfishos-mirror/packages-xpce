@@ -449,6 +449,8 @@ CtoEvent(SDL_Event *event)
     fail;
   if ( sdl_stream_event(event) ) /* I/O stream event */
     fail;
+  if ( ws_menubar_event(event) ) /* Native (MacOS) menu selection */
+    fail;
   if ( event->type == MY_EVENT_FLASH_END )
   { FrameObj fr = event->user.data1;
     if ( !onFlag(fr, F_FREED|F_FREEING) && instanceOfObject(fr, ClassFrame) )

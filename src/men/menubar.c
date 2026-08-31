@@ -45,6 +45,9 @@ initialiseMenuBar(MenuBar mb, Name name)
   assign(mb, members, newObject(ClassChain, EAV));
   assign(mb, buttons, newObject(ClassChain, EAV));
 
+  if ( ws_has_native_menubar(mb) )	/* MacOS shows it at the top of the */
+    assign(mb, displayed, OFF);		/* screen; do not draw it here */
+
   succeed;
 }
 
@@ -94,6 +97,9 @@ static status
 RedrawAreaMenuBar(MenuBar mb, Area a)
 { Cell cell;
   Int x = mb->area->x;
+
+  if ( ws_has_native_menubar(mb) )
+    succeed;
 
   for_cell(cell, mb->buttons)
   { Button b = cell->value;
@@ -186,6 +192,14 @@ computeMenuBar(MenuBar mb)
   int x = 0;
   int gap;
   int h = 0;
+
+  if ( ws_has_native_menubar(mb) )	/* no geometry and no Alt-x mnemonics */
+  { CHANGING_GRAPHICAL(mb,
+	  assign(mb->area, w, ZERO);
+	  assign(mb->area, h, ZERO));
+    assign(mb, request_compute, NIL);
+    succeed;
+  }
 
   if ( hasSendMethodObject(mb, NAME_assignAccelerators) ) /* TBD */
     send(mb, NAME_assignAccelerators, EAV);
@@ -493,10 +507,15 @@ getHorStretchMenuBar(MenuBar mb)
 static status
 geometryMenuBar(MenuBar mb, Int x, Int y, Int w, Int h)
 { Cell cell;
-  int gap = valInt(mb->gap);
+  int gap;
   int wtot = 0;
   int extragap, cx = 0;
   int htot = 0;
+
+  if ( ws_has_native_menubar(mb) )
+    return geometryGraphical(mb, x, y, ZERO, ZERO);
+
+  gap = valInt(mb->gap);
 
   for_cell(cell, mb->buttons)
   { Graphical b = cell->value;
@@ -538,9 +557,18 @@ geometryMenuBar(MenuBar mb, Int x, Int y, Int w, Int h)
 		********************************/
 
 static status
+unlinkMenuBar(MenuBar mb)
+{ ws_menubar_destroyed(mb);
+
+  return unlinkDialogItem((DialogItem)mb);
+}
+
+
+static status
 clearMenuBar(MenuBar mb)
 { clearChain(mb->members);
   clearChain(mb->buttons);
+  ws_menubar_changed(mb);
 
   return requestComputeGraphical(mb, DEFAULT);
 }
@@ -595,6 +623,7 @@ appendMenuBar(MenuBar mb, PopupObj p, Name alignment, Any before)
     assign(b, pen,        mb->pen);
     assign(b, radius,     mb->radius);
     send(p, NAME_format, getSlotObject(mb, NAME_format), EAV);
+    ws_menubar_changed(mb);
     requestComputeGraphical(mb, DEFAULT);
   }
 
@@ -623,6 +652,7 @@ getMemberMenuBar(MenuBar mb, Any obj)
 static status
 deleteMenuBar(MenuBar mb, PopupObj p)
 { deleteChain(mb->members, p);
+  ws_menubar_changed(mb);
   requestComputeGraphical(mb, DEFAULT);
 
   succeed;
@@ -635,6 +665,7 @@ activeMemberMenuBar(MenuBar mb, PopupObj p, BoolObj val)
   { CHANGING_GRAPHICAL(mb,
 	assign(p, active, val);
         changedMenuBarButton(mb, p));
+    ws_menubar_changed(mb);
   }
 
   succeed;
@@ -651,6 +682,7 @@ allActiveMenuBar(MenuBar mb, BoolObj val)
 	  assign(p, active, val);
 	}
 	changedDialogItem(mb));
+  ws_menubar_changed(mb);
 
   succeed;
 }
@@ -810,6 +842,8 @@ static senddecl send_menuBar[] =
      DEFAULT, "Process an event"),
   SM(NAME_initialise, 1, "name=[name]", initialiseMenuBar,
      DEFAULT, "Create from a label"),
+  SM(NAME_unlink, 0, NULL, unlinkMenuBar,
+     DEFAULT, "Drop the native menu bar, if any"),
   SM(NAME_reset, 0, NULL, resetMenuBar,
      NAME_abort, "Reset menubar after an abort"),
   SM(NAME_key, 1, "key=name", keyMenuBar,
@@ -871,7 +905,9 @@ static classvardecl rc_menuBar[] =
   RC(NAME_radius, "int", "0",
      "Rounding radius of the buttons"),
   RC(NAME_size, "size", "size(80,20)",
-     "Minimum size for labels")
+     "Minimum size for labels"),
+  RC(NAME_native, "bool", UXWINMAC("@off", "@off", "@on"),
+     "Use the native (MacOS) menu bar")
 };
 
 /* Class Declaration */

@@ -10,6 +10,10 @@ set(HAVE_GUI ON)
 
 if(HAVE_GUI)
 
+if(APPLE)
+  enable_language(OBJC)
+endif()
+
 find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3-shared)
 find_package(SDL3_image REQUIRED CONFIG)
 find_package(PkgConfig REQUIRED)
@@ -22,6 +26,9 @@ set(GUI_LIBRARIES
     PkgConfig::CAIRO
     PkgConfig::PANGO
     PkgConfig::PANGOCAIRO)
+if(APPLE)
+  list(APPEND GUI_LIBRARIES "-framework Cocoa")
+endif()
 
 if(WIN32)
   set(O_XOS 1)
@@ -54,7 +61,8 @@ file(GLOB files RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/src"
      "${CMAKE_CURRENT_SOURCE_DIR}/src/h/*.h")
 foreach(d ${cdirs})
   file(GLOB tmp RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/src"
-       "${CMAKE_CURRENT_SOURCE_DIR}/src/${d}/*.c")
+       "${CMAKE_CURRENT_SOURCE_DIR}/src/${d}/*.c"
+       "${CMAKE_CURRENT_SOURCE_DIR}/src/${d}/*.m")
   list(APPEND files ${tmp})
 endforeach()
 
