@@ -126,6 +126,11 @@
           split_window             = key('\\C-x2') + key('\\C-x52') + button(browse),
           only_window              = key('\\C-x1') + button(browse),
           -                        = button(browse),
+          history_backward         = key('\\C-\\s-<cursor_left>') +
+                                     button(browse),
+          history_forward          = key('\\C-\\s-<cursor_right>') +
+                                     button(browse),
+          -                        = button(browse),
           bookmark_line            = button(browse),
           show_bookmarks           = button(browse),
           -                        = button(browse),
@@ -951,6 +956,26 @@ only_window(M) :->
     send(Buffer?editors, for_all,
          if(@arg1 \== Editor,
             message(@arg1, close))).
+
+
+/* The location history is also reachable from the two buttons the mode
+   dialog puts in its tool_bar, but those are not there when the menu
+   bar is displayed natively (MacOS).  The keys follow XCode, as the
+   obvious Command-[ and Command-] are taken by ->undent_region and
+   ->indent_region.
+*/
+
+history_backward(_M) :->
+    "Return to the previous location"::
+    get(@emacs, history, History),
+    send(History, can_backward),
+    send(History, backward).
+
+history_forward(_M) :->
+    "Go to the next location"::
+    get(@emacs, history, History),
+    send(History, can_forward),
+    send(History, forward).
 
 
 save_and_kill(M) :->
