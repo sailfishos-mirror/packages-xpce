@@ -768,6 +768,10 @@ lookMenuBar(MenuBar mb, Name look)
   succeed;
 }
 
+static BoolObj
+getNativeMenuBar(MenuBar mb)
+{ return ws_has_native_menubar(mb) ? ON : OFF;
+}
 
 		 /*******************************
 		 *	   ACCELERATORS		*
@@ -886,7 +890,9 @@ static getdecl get_menuBar[] =
   GM(NAME_horStretch, 0, "0..", NULL, getHorStretchMenuBar,
      NAME_layout, "Stetchability (1)"),
   GM(NAME_member, 1, "popup", "name|popup", getMemberMenuBar,
-     NAME_organisation, "Find popup from name")
+     NAME_organisation, "Find popup from name"),
+  GM(NAME_native, 0, "bool", NULL, getNativeMenuBar,
+     NAME_look, "True if we use	native menu bars")
 };
 
 /* Resources */
