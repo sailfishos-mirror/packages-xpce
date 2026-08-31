@@ -163,10 +163,27 @@ keycode_to_name(SDL_Event *event)
        * Without these, Ctrl+\ reached the client as a backslash and a
        * program on a terminal could never be sent SIGQUIT.
        */
-      if ( event->key.key >= '@' && event->key.key < DEL )
-	return toInt(Control(event->key.key));
+      SDL_Keycode key = event->key.key;
+
+      /* SDL reports the unshifted key, but three of the C0 controls
+       * live on shifted characters: on a US keyboard ^^ is Shift-6 and
+       * ^_ is Shift-`-'.  Taking the key as it comes sent a bare `6' or
+       * `-', so Control-Shift-`-' never reached the client as ^_, which
+       * is what libedit binds undo to.  Ask the keymap what this key
+       * produces with the modifiers actually held.
+       */
+      if ( (key < '@' || key >= DEL) && (event->key.mod & SDL_KMOD_SHIFT) )
+      { SDL_Keycode shifted = SDL_GetKeyFromScancode(event->key.scancode,
+						     event->key.mod, false);
+
+	if ( shifted >= '@' && shifted < DEL )
+	  key = shifted;
+      }
+
+      if ( key >= '@' && key < DEL )
+	return toInt(Control(key));
       else
-	return toInt(event->key.key);
+	return toInt(key);
     }
     if ( event->key.mod & SDL_KMOD_GUI )
       return toInt(event->key.key);
