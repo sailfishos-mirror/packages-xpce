@@ -274,7 +274,7 @@ getConvertColour(Class class, Name name)
 	g = g*16 + g;
 	b = b*16 + b;
 	if ( has_alpha )
-	  a = b*16 + a;
+	  a = a*16 + a;
       }
 
       answer(answerObject(ClassColour, name,
