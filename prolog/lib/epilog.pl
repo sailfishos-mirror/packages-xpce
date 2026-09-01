@@ -1611,7 +1611,7 @@ resize(T) :->
     get(T, member, terminal, TI),
     send(TI, set, 0, 0, TW-SBW, TH),
     get(T, member, epilog_report, Bar),
-    send(Bar, place, 0, TH, TW-SBW).
+    send(Bar, place, 0, 0, TW-SBW, TH).
 
 create(T) :->
     "Create the terminal and attach a Prolog thread to it"::
@@ -1648,9 +1648,10 @@ save_history(EW) :->
 
 report(T, Type:name, Fmt:[char_array], Args:any ...) :->
     "Show short messages on the bar over the terminal"::
-    (   report_on_bar(Type)
-    ->  get(T, member, epilog_report, Bar),
-        (   (Fmt == @default ; Fmt == '')
+    get(T, member, epilog_report, Bar),
+    (   report_on_bar(Type),
+        \+ get(Bar, placement, none)
+    ->  (   (Fmt == @default ; Fmt == '')
         ->  send(Bar, hide)
         ;   Format =.. [format, Fmt|Args],
             new(S, string),
@@ -1817,14 +1818,32 @@ process_prog(Name, Prog) :-
     that took a row would resize the terminal, rewrap the whole
     scroll-back, drop the scrolling region and send the process on it a
     SIGWINCH -- on every keystroke of an incremental search.
+
+    Covering a line of the terminal is a nuisance if that is the line
+    being edited, so the `placement' class variable says which line we
+    cover.  By default we go over the last one, unless that is where
+    the user is looking -- see at_top/2 -- in which case we go over the
+    first.  With
+
+        epilog_report.placement: bottom
+
+    in ~/.xpce/Defaults we always take the last line, `top' always
+    takes the first and with `none' the messages go to the normal XPCE
+    reporting instead.
 */
 
 variable(timer,  timer*,          get, "Hides us again").
 variable(client, terminal_image*, get, "Terminal whose search we show").
+variable(placement, {top,bottom,smart,none}, get,
+         "Where I appear over the terminal").
+variable(covers,    area*, get, "Terminal area I am placed in").
 
-class_variable(background,  colour, black,  "Colour behind the message").
-class_variable(colour,      colour, white,  "Colour of the message").
-class_variable(hide_after,  int,    5,      "Seconds a message stays up").
+class_variable(background,  colour, '#0008',  "Colour behind the message").
+class_variable(colour,      colour, white,    "Colour of the message").
+class_variable(hide_after,  int,    5,        "Seconds a message stays up").
+class_variable(placement,   {top,bottom,smart,none}, smart,
+               "Show messages at the top, at the bottom, out of the \c
+                way (`smart') or not at all").
 
 initialise(R) :->
     send_super(R, initialise),
@@ -1848,7 +1867,7 @@ initialise(R) :->
               ]),
     send(Menu, displayed, @off),
     %  The box must hold the text: my <-height is the union of the two,
-    %  and ->place puts my bottom on the bottom of the terminal.
+    %  and ->layout uses it to put me on an edge of the terminal.
     get(Text, height, TextHeight),
     send(B, height, TextHeight+6).
 
@@ -1868,34 +1887,100 @@ unlink(R) :->
     send(R, stop_timer),
     send_super(R, unlink).
 
-place(R, X:int, Bottom:int, Width:int) :->
-    "Put me at the bottom left of the area I cover"::
-    get(R, member, box, Box),
-    send(Box, width, Width),
-    get(R, member, search_options, Menu),
-    send(Menu, compute),
-    get(Menu, width, MW),
-    get(Box, height, BH),
-    get(Menu, height, MH),
-    send(Menu, set, Width-MW-6, (BH-MH)/2),
-    get(R, height, H),
-    send(R, set, X, Bottom-H).
+place(R, X:int, Y:int, Width:int, Height:int) :->
+    "Cover the given area of the terminal"::
+    get(R, covers, Old),
+    (   Old == @nil
+    ->  send(R, slot, covers, area(X, Y, Width, Height))
+    ;   send(Old, set, X, Y, Width, Height)
+    ),
+    send(R, layout).
+
+placement(R, Placement:{top,bottom,smart,none}) :->
+    "Show me at the top, at the bottom or not at all"::
+    send(R, slot, placement, Placement),
+    (   Placement == none
+    ->  send(R, hide)
+    ;   send(R, layout)
+    ).
+
+layout(R) :->
+    "Put me on the edge of the area I cover named by <-placement"::
+    get(R, covers, Area),
+    (   Area == @nil
+    ->  true
+    ;   get(Area, position, point(X, Y)),
+        get(Area, size, size(Width, Height)),
+        get(R, member, box, Box),
+        send(Box, width, Width),
+        get(R, member, search_options, Menu),
+        send(Menu, compute),
+        get(Menu, width, MW),
+        get(Box, height, BH),
+        get(Menu, height, MH),
+        send(Menu, set, Width-MW-6, (BH-MH)/2),
+        get(R, height, H),
+        (   at_top(R, H)
+        ->  send(R, set, X, Y)
+        ;   send(R, set, X, Y+Height-H)
+        )
+    ).
+
+%!  at_top(+Report, +BarHeight) is semidet.
+%
+%   True when the bar goes over the  first line of the terminal rather
+%   than over the last.  With `smart' that is where it goes as soon as
+%   the lines it would cover hold what the user is looking at: the
+%   caret, or an end of the selection, which is also the hit of a
+%   running incremental search.
+
+at_top(R, _BarHeight) :-
+    get(R, placement, top),
+    !.
+at_top(R, BarHeight) :-
+    get(R, placement, smart),
+    get(R, client, TI),
+    TI \== @nil,
+    get(TI, rows, Rows),
+    get(TI, font, Font),
+    get(Font, height, FontHeight),      % may be fractional
+    Covered is max(1, ceiling(BarHeight/FontHeight)),
+    First is Rows-Covered,
+    watched_row(TI, Row),
+    Row >= First,
+    Row < Rows,
+    !.
+
+%!  watched_row(+Terminal, -Row) is nondet.
+%
+%   Rows of the terminal window the user has an eye on.  <-rows counts
+%   from the top of the window, so a  row outside 0..<-rows-1 is one
+%   scrolled out of view.
+
+watched_row(TI, Row) :-
+    get(TI, cursor_position, point(_, Row)).
+watched_row(TI, Row) :-
+    (   get(TI, selection_start, point(_, Row))
+    ;   get(TI, selection_end, point(_, Row))
+    ).
 
 search_options(R, Case:bool, Word:bool) :->
     "Show the boxes and what they stand at"::
     get(R, member, search_options, Menu),
     send(Menu, selected, exact_case, Case),
     send(Menu, selected, search_word, Word),
-    send(Menu, displayed, @on).
+    send(Menu, displayed, @on),
+    send(R, layout).
 
 show(R, _Type:name, Message:string, Transient:[bool]) :->
     "Show Message, and take it away again unless it is a prompt"::
     get(R, member, text, Text),
     send(Text, string, Message),
-    send(R, displayed, @on),
-    send(R, expose),
     get(R, member, search_options, Menu),
     send(Menu, displayed, @off),        % a search turns them back on
+    send(R, layout),                    % `smart' looks where we are now
+    send(R, displayed, @on),
+    send(R, expose),
     send(R, stop_timer),
     (   Transient == @off
     ->  true                            % it stays until its mode is done

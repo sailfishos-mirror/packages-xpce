@@ -2219,6 +2219,46 @@ getCursorPositionTerminalImage(TerminalImage ti)
 }
 
 
+/* Return the ends of the selection as Point(col, row).
+ *
+ * The coordinates are the ones <-cursor_position uses, so a selection
+ * that is scrolled out of view answers rows outside 0..<-rows-1.  Both
+ * fail if there is no selection.  As in class editor, `start' is where
+ * the selection was anchored and `end' the side that moved, which is
+ * to say that `end' may come before `start' in the text.
+ */
+
+static Point
+selection_position(RlcData b, int line, int chr)
+{ int col = rlc_cell_to_vcol(&b->lines[line], chr);
+  int row = rlc_view_count(b, b->window_start, line);
+
+  answer(answerObject(ClassPoint, toInt(col), toInt(row), EAV));
+}
+
+
+static Point
+getSelectionStartTerminalImage(TerminalImage ti)
+{ RlcData b = ti->data;
+
+  if ( !rlc_has_selection(b) )
+    fail;
+
+  return selection_position(b, b->sel_start_line, b->sel_start_char);
+}
+
+
+static Point
+getSelectionEndTerminalImage(TerminalImage ti)
+{ RlcData b = ti->data;
+
+  if ( !rlc_has_selection(b) )
+    fail;
+
+  return selection_position(b, b->sel_end_line, b->sel_end_char);
+}
+
+
 /* Return the size of the terminal in character units.
  *
  * The pixel size (<-width, <-height) only yields this after dividing
@@ -3826,6 +3866,12 @@ static getdecl get_terminal_image[] =
   GM(NAME_cursorPosition, 0, "point", NULL,
      getCursorPositionTerminalImage,
      NAME_cursor, "Logical cursor position as point(col, row)"),
+  GM(NAME_selectionStart, 0, "point", NULL,
+     getSelectionStartTerminalImage,
+     NAME_selection, "Anchor of the selection as point(col, row)"),
+  GM(NAME_selectionEnd, 0, "point", NULL,
+     getSelectionEndTerminalImage,
+     NAME_selection, "Moving end of the selection as point(col, row)"),
   GM(NAME_row, 1, "string", "int",
      getRowTerminalImage,
      NAME_text, "Text content of visible row (0-based from top)"),

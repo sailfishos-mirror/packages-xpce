@@ -177,6 +177,7 @@ terminal_test_unit(terminal_search).
 terminal_test_unit(terminal_blocks).
 terminal_test_unit(terminal_isearch).
 terminal_test_unit(terminal_selection_matches).
+terminal_test_unit(terminal_report).
 terminal_test_unit(terminal_resize).
 terminal_test_unit(terminal_control_keys).
 terminal_test_unit(terminal_function_keys).
@@ -687,6 +688,44 @@ term_report_shown(terminal(_, xpce(_, TI))) :-
     get(TI, device, Window),
     get(Window, member, epilog_report, Bar),
     get(Bar, displayed, @on).
+
+%!  term_report_status(+T, +Text) is det.
+%!  term_report_placement(+T, +Placement) is det.
+%!  term_report_side(+T, -Side) is semidet.
+%
+%   Put Text on the report bar the way anything that has something to
+%   say does, say where the bar may go, and read back which end of the
+%   window it went to.  <-side fails while the bar is not up at all.
+
+term_report_status(terminal(_, xpce(_, TI)), Text) :-
+    get(TI, device, Window),
+    send(Window, report, status, Text).
+
+term_report_placement(terminal(_, xpce(_, TI)), Placement) :-
+    get(TI, device, Window),
+    get(Window, member, epilog_report, Bar),
+    send(Bar, placement, Placement).
+
+term_report_side(terminal(_, xpce(_, TI)), Side) :-
+    get(TI, device, Window),
+    get(Window, member, epilog_report, Bar),
+    get(Bar, displayed, @on),
+    get(Bar, area, Area),
+    get(Area, y, Y),
+    get(Window, height, Height),
+    (   Y < Height/2
+    ->  Side = top
+    ;   Side = bottom
+    ).
+
+%!  term_selection_rows(+T, -Rows) is semidet.
+%
+%   The rows the two ends of the selection are on, as Start-End.  Fails
+%   when there is no selection.
+
+term_selection_rows(terminal(_, xpce(_, TI)), Start-End) :-
+    get(TI, selection_start, point(_, Start)),
+    get(TI, selection_end, point(_, End)).
 
 %!  term_exact_case(+T, +Bool) is det.
 %!  term_search_word(+T, +Bool) is det.
@@ -5467,6 +5506,117 @@ test(selection_refuses_the_alternate_screen,
     assertion(\+ sub_atom(Marks, _, _, _, o)).
 
 :- end_tests(terminal_selection_matches).
+
+
+		 /*******************************
+		 *         REPORT BAR           *
+		 *******************************/
+
+/** <section> Where the bar with the short messages goes
+
+    It is drawn over a line of the terminal rather than next to it, so
+    the line it takes is the one the user is least likely to be reading:
+    the last, unless that is where the caret or the selection is, in
+    which case the first.  `epilog_report.placement' pins it to either
+    end or takes it away.
+*/
+
+:- begin_tests(terminal_report,
+               [ condition(needs([program_output])),
+                 setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
+
+test(report_bar_can_be_pinned,
+     [ setup(test_begin(T)),
+       cleanup(term_report_placement(T, smart))
+     ]) :-
+    scrollback(T, 30),                  % the caret is on the last row
+    term_report_placement(T, bottom),
+    term_report_status(T, 'pinned'),
+    term_report_side(T, Bottom),
+    assertion(Bottom == bottom),
+    term_report_placement(T, top),
+    term_report_status(T, 'pinned'),
+    term_report_side(T, Top),
+    assertion(Top == top).
+
+test(smart_bar_takes_the_last_line,
+     [ setup(test_begin(T))
+     ]) :-
+    %  Nothing to keep it away: the caret is at the top of a screen
+    %  that has just been cleared.
+    buffer(T, 'alpha'),
+    term_report_status(T, 'out of the way'),
+    term_report_side(T, Side),
+    assertion(Side == bottom).
+
+test(smart_bar_gets_off_the_caret,
+     [ setup(test_begin(T))
+     ]) :-
+    %  The screen is full, so what is being typed is on the last line
+    %  and the bar would cover it.
+    scrollback(T, 30),
+    term_cursor(T, _, Row),
+    term_rows(T, Rows),
+    assertion(Row =:= Rows-1),
+    term_report_status(T, 'not over the caret'),
+    term_report_side(T, Side),
+    assertion(Side == top).
+
+test(smart_bar_gets_off_the_selection,
+     [ condition(needs([selection])),
+       setup(test_begin(T)),
+       cleanup(term_select(T, @default, @default))
+     ]) :-
+    %  What an incremental search walks to is the selection, so a hit
+    %  on the last line moves the bar that reports on it.  The caret is
+    %  put back at the top, as it is the selection that has to do it.
+    term_rows(T, Rows),
+    Last is Rows-1,
+    fill_screen(T, Last, 'HIT'),
+    term_cursor(T, _, Caret),
+    assertion(Caret == 0),
+    term_report_status(T, 'at the bottom'),
+    term_report_side(T, Bottom),
+    assertion(Bottom == bottom),
+    term_find(T, 0, 'HIT', End),
+    Start is End-3,
+    term_select(T, Start, End),
+    term_selection_rows(T, StartRow-EndRow),
+    assertion(StartRow == Last),
+    assertion(EndRow == Last),
+    term_report_status(T, 'on the selection'),
+    term_report_side(T, Top),
+    assertion(Top == top).
+
+%!  fill_screen(+T, +Row, +Text) is det.
+%
+%   Clear the screen, put Text on Row and leave the caret at the top,
+%   so that Row is the only thing on the screen that matters.
+
+fill_screen(T, Row, Text) :-
+    out(T, '\e[3J\e[H\e[2J'),
+    forall(between(1, Row, _), out(T, '\r\n')),
+    out(T, Text),
+    out(T, '\e[H').
+
+test(selection_rows_need_a_selection,
+     [ condition(needs([selection])),
+       setup(test_begin(T))
+     ]) :-
+    term_select(T, @default, @default),
+    assertion(\+ term_selection_rows(T, _)).
+
+test(report_bar_can_be_turned_off,
+     [ setup(test_begin(T)),
+       cleanup(term_report_placement(T, smart))
+     ]) :-
+    term_report_placement(T, none),
+    term_report_status(T, 'not shown'),
+    assertion(\+ term_report_shown(T)).
+
+:- end_tests(terminal_report).
 
 
 

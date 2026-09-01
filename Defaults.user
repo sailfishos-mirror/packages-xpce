@@ -31,6 +31,16 @@
 !				       colour(blue),colour(magenta),colour(cyan),colour(white))
 !prolog_terminal.fold_previous: @on
 
+! The bar that shows short messages (e.g., the incremental search) is
+! drawn over a line of the terminal.  By default (`smart') it takes the
+! last line unless the caret or the selection is there, in which case it
+! takes the first.  Pin it to `bottom' or `top', or take it away with
+! `none', in which case the messages go to the normal XPCE reporting.
+
+!epilog_report.placement:	bottom
+!epilog_report.placement:	top
+!epilog_report.placement:	none
+
 ! Basic style for keyboard accelerators.  On Windows the default is `cua'.
 ! (Common User Access), on Unix the default is `emacs'.  You can overrule
 ! the default here.
