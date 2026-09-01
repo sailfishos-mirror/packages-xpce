@@ -1833,7 +1833,7 @@ process_prog(Name, Prog) :-
 */
 
 variable(timer,  timer*,          get, "Hides us again").
-variable(client, terminal_image*, get, "Terminal whose search we show").
+variable(client, terminal_image*, both, "Terminal whose search we show").
 variable(placement, {top,bottom,smart,none}, get,
          "Where I appear over the terminal").
 variable(covers,    area*, get, "Terminal area I am placed in").
@@ -1871,10 +1871,6 @@ initialise(R) :->
     get(Text, height, TextHeight),
     send(B, height, TextHeight+6).
 
-client(R, Client:terminal_image) :->
-    "Have the boxes drive the search of Client"::
-    send(R, slot, client, Client).
-
 option(R, Which:name, Value:bool) :->
     "A box was clicked; the box is named after what it sets"::
     get(R, client, Client),
@@ -1909,8 +1905,7 @@ layout(R) :->
     get(R, covers, Area),
     (   Area == @nil
     ->  true
-    ;   get(Area, position, point(X, Y)),
-        get(Area, size, size(Width, Height)),
+    ;   object(Area, area(X, Y, Width, Height)),
         get(R, member, box, Box),
         send(Box, width, Width),
         get(R, member, search_options, Menu),
