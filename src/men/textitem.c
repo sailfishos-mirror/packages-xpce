@@ -812,9 +812,17 @@ combo_flags(TextItem ti)
 }
 
 
+/* The completer is shared with class menu (a ->kind: cycle menu opens
+   it as its combo box), so its client is a dialog_item that need not be
+   a text_item and need not have a <->style at all.
+*/
+
 int
 text_item_combo_width(TextItem ti)
-{ if ( ti->style == NAME_comboBox )
+{ if ( !instanceOfObject(ti, ClassTextItem) )
+    return 0;
+
+  if ( ti->style == NAME_comboBox )
   { int w = ws_combo_box_width((Graphical)ti);
 
     return w >= 0 ? w : dpi_scale(ti, 14);
