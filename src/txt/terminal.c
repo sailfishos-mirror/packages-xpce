@@ -404,6 +404,9 @@ static int	rlc_cluster_distance(RlcData b, int l1, int c1,
 				     int l2, int c2);
 static bool	rlc_selection_in_input(RlcData b, int *sl, int *sc,
 				       int *el, int *ec);
+static bool	rlc_selection_on_input(RlcData b);
+static status	clearSelectionTerminalImage(TerminalImage ti);
+static void	dropInputSelectionTerminalImage(TerminalImage ti);
 static void	rlc_resize_pty(RlcData b, int cols, int rows);
 static void	rlc_translate_mouse(RlcData b, int x, int y,
 				   int *line, int *chr);
@@ -1312,16 +1315,20 @@ typedTerminalImage(TerminalImage ti, EventObj ev)
   }
 
   if ( seq )
-  { rlc_send(ti->data, seq, strlen(seq));
+  { dropInputSelectionTerminalImage(ti);
+    rlc_send(ti->data, seq, strlen(seq));
   } else
   { /* Typing over a selection replaces it, as it would in any editor.
      * Only for a character that inserts itself: a control key is a
      * command, and the meta keys became a sequence above.
      * ->delete_selection declines a selection that is not in the input,
-     * so this costs nothing anywhere else on the screen.
+     * so this costs nothing anywhere else on the screen.  What it
+     * declines is dropped instead: the line is about to look different
+     * either way.
      */
-    if ( chr >= ' ' && chr != DEL )
-      send(ti, NAME_deleteSelection, EAV);
+    if ( chr < ' ' || chr == DEL ||
+	 !send(ti, NAME_deleteSelection, EAV) )
+      dropInputSelectionTerminalImage(ti);
     typed_char(ti->data, chr);
   }
 
@@ -2562,6 +2569,28 @@ copyOrInterruptTerminalImage(TerminalImage ti)
 { if ( send(ti, NAME_copy, NAME_clipboard, EAV) )
     succeed;
   return send(ti, NAME_interrupt, EAV);
+}
+
+
+/* Drop a selection that the line being edited is about to leave behind.
+ *
+ * A key we hand the program moves its caret or changes what it is
+ * reading, and a highlight over that line then stands over something
+ * else than what was picked -- which is why an editor drops the
+ * selection as soon as one types on.  What the key cannot touch is left
+ * alone: the prompt in front of the input and the output above it come
+ * back as they were.
+ *
+ * Any overlap with the input counts, not just a selection wholly inside
+ * it as ->delete_selection asks for: ->select_all makes one that starts
+ * in the output and runs into the line being typed, and editing on
+ * leaves that one as stale as the rest.
+ */
+
+static void
+dropInputSelectionTerminalImage(TerminalImage ti)
+{ if ( rlc_selection_on_input(ti->data) )
+    clearSelectionTerminalImage(ti);
 }
 
 
@@ -4468,14 +4497,15 @@ rlc_logical_end(RlcData b, int line, int *el, int *ec)
  *	else on the screen is output, which we cannot take back.
  */
 
-static bool
-rlc_selection_in_input(RlcData b, int *sl, int *sc, int *el, int *ec)
-{ int isl, isc, lel, lec;
+/* rlc_selection_range()
+ *	The selection ordered: (sl,sc) is where it starts in the text and
+ *	(el,ec) where it ends, whichever of the two the user anchored it
+ *	at.
+ */
 
-  if ( !rlc_editing_line(b) || !rlc_has_selection(b) )
-    return false;
-
-  if ( rlc_sel_lt(b, b->sel_start_line, b->sel_start_char,
+static void
+rlc_selection_range(RlcData b, int *sl, int *sc, int *el, int *ec)
+{ if ( rlc_sel_lt(b, b->sel_start_line, b->sel_start_char,
 		     b->sel_end_line, b->sel_end_char) )
   { *sl = b->sel_start_line; *sc = b->sel_start_char;
     *el = b->sel_end_line;   *ec = b->sel_end_char;
@@ -4483,6 +4513,17 @@ rlc_selection_in_input(RlcData b, int *sl, int *sc, int *el, int *ec)
   { *sl = b->sel_end_line;   *sc = b->sel_end_char;
     *el = b->sel_start_line; *ec = b->sel_start_char;
   }
+}
+
+
+static bool
+rlc_selection_in_input(RlcData b, int *sl, int *sc, int *el, int *ec)
+{ int isl, isc, lel, lec;
+
+  if ( !rlc_editing_line(b) || !rlc_has_selection(b) )
+    return false;
+
+  rlc_selection_range(b, sl, sc, el, ec);
 
 					/* one logical line, the one we
 					   are editing */
@@ -4501,6 +4542,33 @@ rlc_selection_in_input(RlcData b, int *sl, int *sc, int *el, int *ec)
     return false;
 
   return true;
+}
+
+
+/* rlc_selection_on_input()
+ *	Does the selection cover any of the text being edited?  Where
+ *	rlc_selection_in_input() asks whether we may edit the selection,
+ *	this asks only whether editing the line can leave it standing
+ *	over something else, so a selection that runs from the output
+ *	into the input counts too.  The prompt in front of the input does
+ *	not: it is redrawn as it was.
+ */
+
+static bool
+rlc_selection_on_input(RlcData b)
+{ int sl, sc, el, ec, isl, isc, lel, lec;
+
+  if ( !rlc_editing_line(b) || !rlc_has_selection(b) )
+    return false;
+
+  if ( !rlc_input_start(b, b->caret_y, &isl, &isc) )
+    return false;
+
+  rlc_selection_range(b, &sl, &sc, &el, &ec);
+  rlc_logical_end(b, b->caret_y, &lel, &lec);
+
+  return rlc_sel_lt(b, sl, sc, lel, lec) &&	/* starts before its end */
+	 rlc_sel_lt(b, isl, isc, el, ec);	/* ends after its start */
 }
 
 

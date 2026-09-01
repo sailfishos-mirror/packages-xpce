@@ -177,6 +177,7 @@ terminal_test_unit(terminal_search).
 terminal_test_unit(terminal_blocks).
 terminal_test_unit(terminal_isearch).
 terminal_test_unit(terminal_selection_matches).
+terminal_test_unit(terminal_input_selection).
 terminal_test_unit(terminal_report).
 terminal_test_unit(terminal_resize).
 terminal_test_unit(terminal_control_keys).
@@ -5506,6 +5507,120 @@ test(selection_refuses_the_alternate_screen,
     assertion(\+ sub_atom(Marks, _, _, _, o)).
 
 :- end_tests(terminal_selection_matches).
+
+
+		 /*******************************
+		 *   SELECTION AND THE INPUT    *
+		 *******************************/
+
+/** <section> The selection over the line being edited
+
+    A selection there can be edited: typing replaces it and Delete takes
+    it.  Every other key drops it, as an editor does -- the caret moves
+    or the text changes, and the highlight no longer covers what was
+    picked.  What the key cannot touch stays: the prompt in front of the
+    input is redrawn as it was, and so is everything above it.
+*/
+
+:- begin_tests(terminal_input_selection,
+               [ condition(needs([selection])),
+                 setup(setup_unit),
+                 cleanup(cleanup_unit)
+               ]).
+
+%!  input_typed(+T, +Text) is det.
+%
+%   Type Text at the window and wait until the line editor has put it
+%   on the screen, where it can be selected.
+
+input_typed(T, Text) :-
+    term_type_keys(T, Text),
+    assertion(wait_until(marker_on_screen(T, Text), 10)).
+
+%!  command_output(+T, +Command, +Output) is det.
+%
+%   Run Command at the prompt and wait until the row it wrote is on the
+%   screen and the next prompt is up, so that Output is above the line
+%   being edited.
+
+command_output(T, Command, Output) :-
+    input_typed(T, Command),
+    term_key_press(T, 'RET'),
+    assertion(wait_until(row_on_screen(T, Output), 15)),
+    assertion(wait_for_prompt(T)).
+
+%!  select_text(+T, +Text) is det.
+%!  select_prompt(+T) is det.
+%
+%   Select Text, or the prompt in front of the line being edited.  Both
+%   take the last occurrence: the scroll back holds the prompt of every
+%   command of the session, and may hold what an earlier test typed.
+
+select_text(T, Text) :-
+    select_last(T, Text),
+    assertion(term_selection(T, Text)).
+
+select_prompt(T) :-
+    select_last(T, '?- '),
+    assertion(term_selection(T, '?- ')).
+
+select_last(T, Text) :-
+    term_length(T, Length),
+    term_find(T, Length, Text, -1, end, @on, @off, End),
+    atom_length(Text, Len),
+    Start is End-Len,
+    term_select(T, Start, End).
+
+test(typing_replaces_the_selection, [setup(test_begin(T))]) :-
+    input_typed(T, 'alpha beta'),
+    select_text(T, alpha),
+    term_type_keys(T, 'x'),
+    assertion(wait_until(marker_on_screen(T, 'x beta'), 5)),
+    assertion(\+ term_has_selection(T)).
+
+test(moving_the_caret_drops_the_selection, [setup(test_begin(T))]) :-
+    %  Nothing is deleted and nothing is typed, but the caret is no
+    %  longer where the selection was made and what is typed next lands
+    %  somewhere else.
+    input_typed(T, 'gamma delta'),
+    select_text(T, gamma),
+    term_key_press(T, cursor_left),
+    drive(0.2),
+    assertion(\+ term_has_selection(T)).
+
+test(a_selection_that_reaches_the_input_goes_too,
+     [ setup(test_begin(T)),
+       cleanup(term_select(T, @default, @default))
+     ]) :-
+    %  ->select_all makes one that starts in the output: the part of it
+    %  over the line being edited is stale like any other.
+    input_typed(T, 'epsilon zeta'),
+    term_select_all(T),
+    assertion(term_has_selection(T)),
+    term_key_press(T, cursor_left),
+    drive(0.2),
+    assertion(\+ term_has_selection(T)).
+
+test(the_prompt_keeps_its_selection, [setup(test_begin(T))]) :-
+    %  The prompt in front of the input is redrawn as it was, so a
+    %  selection on it is not stale.  It is also the boundary: one cell
+    %  further is inside the input and would go.
+    input_typed(T, 'eta theta'),
+    select_prompt(T),
+    term_key_press(T, cursor_left),
+    drive(0.2),
+    assertion(term_selection(T, '?- ')).
+
+test(the_output_keeps_its_selection, [setup(test_begin(T))]) :-
+    %  What a command wrote is not the line being edited: the key
+    %  cannot touch it, and it stays to be copied.
+    command_output(T, 'write(iota), nl.', iota),
+    select_text(T, iota),
+    term_key_press(T, cursor_left),
+    drive(0.2),
+    assertion(term_selection(T, iota)).
+
+:- end_tests(terminal_input_selection).
 
 
 		 /*******************************
