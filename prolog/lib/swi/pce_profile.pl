@@ -371,6 +371,7 @@ initialise(W) :->
     send(W, pen, 0),
     send(W, label, 'Details'),
     send(W, scrollbars, vertical),
+    send(W, restrict_scroll, @on),
     send(W, display, new(T, tabular)),
     send(T, rules, all),
     send(T, cell_spacing, -1),
