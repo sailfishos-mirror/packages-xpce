@@ -88,14 +88,16 @@ initialiseMenu(Menu m, Name name, Name kind, Code msg)
 
 static status
 unlinkMenu(Menu m)
-{ Cell cell;
+{ if ( notNil(m->members) )		/* <-members is @nil if ->initialise */
+  { Cell cell;				/* failed: a failed ->initialise is */
+					/* still followed by ->unlink */
+    for_cell(cell, m->members)
+    { MenuItem mi = cell->value;
 
-  for_cell(cell, m->members)
-  { MenuItem mi = cell->value;
-
-    assign(mi, menu, NIL);
+      assign(mi, menu, NIL);
+    }
+    clearChain(m->members);
   }
-  clearChain(m->members);
 
   return unlinkDialogItem((DialogItem) m);
 }
