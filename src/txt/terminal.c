@@ -5519,10 +5519,107 @@ rlc_scroll_lines(RlcData b, int lines)
  *  chars_columns(cells, n) * cw pixels.  Underline is re-applied per
  *  cluster so it still joins visually.
  */
+/* The Block Elements, U+2580..U+259F, drawn as rectangles of the cell
+ * rather than as glyphs of the font.
+ *
+ * A font lays its glyphs out in its own em box, which is not the cell:
+ * the box is placed by the baseline and is shorter than the line height
+ * a terminal gives a row.  A full block then leaves a strip of the cell
+ * background above it, a quadrant sits below the top of its cell, and
+ * what the client drew as one solid shape comes out of the screen in
+ * stripes -- visible wherever the client also set a background colour,
+ * and as a gap between the rows of a picture built out of quadrants.
+ * Every terminal draws these itself for that reason.
+ *
+ * block_element_rects() answers the rectangles of `code' in eighths of
+ * the cell, 0 if it is not one we draw.  The three shades (U+2591..93)
+ * are left to the font: they are a texture rather than a shape, and a
+ * rectangle is not what they are made of.
+ */
+
+typedef struct
+{ int x, y, w, h;			/* eighths of the cell */
+} cell_rect;
+
+#define MAX_CELL_RECTS 4
+
+static int
+block_element_rects(int code, cell_rect *r)
+{ switch(code)
+  { case 0x2580:			/* upper half */
+      r[0] = (cell_rect){0, 0, 8, 4};
+      return 1;
+    case 0x2581: case 0x2582: case 0x2583: case 0x2584: /* lower n/8, */
+    case 0x2585: case 0x2586: case 0x2587: case 0x2588: /* full block */
+    { int n = code - 0x2580;
+      r[0] = (cell_rect){0, 8-n, 8, n};
+      return 1;
+    }
+    case 0x2589: case 0x258a: case 0x258b: case 0x258c: /* left n/8 */
+    case 0x258d: case 0x258e: case 0x258f:
+    { int n = 0x2590 - code;
+      r[0] = (cell_rect){0, 0, n, 8};
+      return 1;
+    }
+    case 0x2590:			/* right half */
+      r[0] = (cell_rect){4, 0, 4, 8};
+      return 1;
+    case 0x2594:			/* upper one eighth */
+      r[0] = (cell_rect){0, 0, 8, 1};
+      return 1;
+    case 0x2595:			/* right one eighth */
+      r[0] = (cell_rect){7, 0, 1, 8};
+      return 1;
+    case 0x2596: case 0x2597: case 0x2598: case 0x2599: /* the quadrants */
+    case 0x259a: case 0x259b: case 0x259c: case 0x259d:
+    case 0x259e: case 0x259f:
+    { /* Which quadrants each of them lights, as upper-left,
+       * upper-right, lower-left, lower-right.
+       */
+      static const unsigned char quadrants[] =
+      { 0x4, 0x8, 0x1, 0xd, 0x9, 0x7, 0xb, 0x2, 0x6, 0xe };
+      int bits = quadrants[code - 0x2596];
+      int n = 0;
+
+      for(int q=0; q<4; q++)
+      { if ( bits & (1<<q) )
+	  r[n++] = (cell_rect){ (q&1) ? 4 : 0, (q&2) ? 4 : 0, 4, 4 };
+      }
+      return n;
+    }
+  }
+
+  return 0;
+}
+
+/* Round to the pixel the cell edge nearest `v'.  Both sides of a shared
+ * edge round the same way, so neither a seam nor an overlap can appear
+ * between two of these rectangles or between one and the cell next to
+ * it.
+ */
+
+static int
+round_edge(double v)
+{ return (int)(v < 0.0 ? v - 0.5 : v + 0.5);
+}
+
+static void
+paint_block_element(const cell_rect *r, int n,
+		    int x, int y, int w, int h)
+{ for(int i=0; i<n; i++)
+  { int x0 = round_edge(x + (double)r[i].x           * w / 8.0);
+    int x1 = round_edge(x + (double)(r[i].x+r[i].w)  * w / 8.0);
+    int y0 = round_edge(y + (double)r[i].y           * h / 8.0);
+    int y1 = round_edge(y + (double)(r[i].y+r[i].h)  * h / 8.0);
+
+    r_fill(x0, y0, x1-x0, y1-y0, NAME_foreground);
+  }
+}
+
 static void
 paint_chunks(const text_char *cells, int n,
 	     const char *utf8, int ulen,
-	     int x0, int ty, int cw, FontObj font,
+	     int x0, int ty, int ctop, int ch, int cw, FontObj font,
 	     int underline, Name underline_texture,
 	     int strike, Name strike_texture)
 { const text_char *c = cells;
@@ -5577,7 +5674,14 @@ paint_chunks(const text_char *cells, int n,
     int chunk_cols = chars_columns(c + chunk_i, i - chunk_i);
     int chunk_w    = chunk_cols * cw;
 
-    s_print_utf8(chunk_u, chunk_ulen, x0, ty, font);
+    cell_rect rects[MAX_CELL_RECTS];
+    int nrects;
+
+    if ( i - chunk_i == 1 &&
+	 (nrects=block_element_rects(c[chunk_i].code, rects)) > 0 )
+      paint_block_element(rects, nrects, x0, ctop, chunk_w, ch);
+    else
+      s_print_utf8(chunk_u, chunk_ulen, x0, ty, font);
     if (underline)
       r_underline(font, x0, ty, chunk_w, DEFAULT, underline_texture);
     if (strike)
@@ -6050,7 +6154,8 @@ rlc_paint_text(RlcData b,
     int x0 = *cx;
     *cx += chars_columns(chars, len) * b->cw;
     r_clear(x0, ty-b->cb, *cx-x0, b->ch);
-    paint_chunks(chars, len, text, (int)(t-text), x0, ty, b->cw, ti->font,
+    paint_chunks(chars, len, text, (int)(t-text), x0, ty,
+		 ty-b->cb, b->ch, b->cw, ti->font,
                  0, NAME_none, 0, NAME_none);
     r_colour(ofg);
     r_background(obg);
@@ -6125,7 +6230,8 @@ rlc_paint_text(RlcData b,
 	  }
 	}
       }
-      paint_chunks(s, segment, t, ulen, x0, ty, b->cw, font,
+      paint_chunks(s, segment, t, ulen, x0, ty,
+		   ty-b->cb, b->ch, b->cw, font,
                    es.underline, es.underline_texture,
                    es.strike, es.strike_texture);
       if ( flags.inverse )

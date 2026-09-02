@@ -8,6 +8,7 @@ test_libs(object_reference     OPTIONS ${XPCE_TEST_OPTIONS})
 test_libs(terminal_osc         OPTIONS ${XPCE_TEST_OPTIONS})
 test_libs(terminal_bce         OPTIONS ${XPCE_TEST_OPTIONS})
 test_libs(terminal_palette     OPTIONS ${XPCE_TEST_OPTIONS})
+test_libs(terminal_glyphs      OPTIONS ${XPCE_TEST_OPTIONS})
 
 set(XPCE_EXTRA_TESTS xpce:colour
                      xpce:no_display
@@ -15,7 +16,8 @@ set(XPCE_EXTRA_TESTS xpce:colour
                      xpce:object_reference
                      xpce:terminal_osc
                      xpce:terminal_bce
-                     xpce:terminal_palette)
+                     xpce:terminal_palette
+                     xpce:terminal_glyphs)
 
 # The terminal suite drives a terminal and reads the screen back, so it
 # spends its time waiting for the terminal rather than computing: about a
