@@ -1167,8 +1167,11 @@ function_key_number(Any id)
  * user started: a key the window keeps for itself is one that program
  * can never be given.
  *
- * Ctrl+Shift and Meta combinations do not produce a control
- * character, so the window's own bindings keep working throughout.
+ * Meta combinations do not produce a control character, so the
+ * window's own bindings keep working throughout.  Ctrl+Shift does
+ * produce one -- the keymap ignores the shift -- and is dealt with in
+ * ->typed, which keeps such a key for the window when it has a
+ * binding for it.
  */
 
 static bool
@@ -1248,12 +1251,28 @@ typedTerminalImage(TerminalImage ti, EventObj ev)
     assign(ti, focus_function, NIL);
   }
 
-  if ( ( (valInt(ev->buttons) & BUTTON_gui) ||
-	 ((valInt(ev->buttons) & (BUTTON_shift|BUTTON_control)) ==
-	  (BUTTON_shift|BUTTON_control))
-       ) &&
-       typedKeyBinding(ti->bindings, ev, (Graphical)ti) )
-    succeed;
+  /* Command (the GUI key) and Ctrl+Shift are the window's own
+   * modifiers: they run our bindings ahead of everything below, and
+   * the client never sees them.  A key we have a binding for is ours
+   * even when the binding declines -- ->copy without a selection must
+   * not leave Command-C to insert a `c' in whatever is reading, nor
+   * Ctrl+Shift-C to reach it as the ^C the keymap made of it.  Command
+   * is ours whether or not it is bound: it is not terminal input on
+   * any platform that has it.
+   */
+  int btns = valInt(ev->buttons);
+  bool ours = ( (btns & BUTTON_gui) ||
+		((btns & (BUTTON_shift|BUTTON_control)) ==
+		 (BUTTON_shift|BUTTON_control)) );
+
+  if ( ours )
+  { bool bound = !!getFunctionKeyBinding(ti->bindings, ev);
+
+    if ( typedKeyBinding(ti->bindings, ev, (Graphical)ti) )
+      succeed;
+    if ( bound || (btns & BUTTON_gui) )
+      succeed;
+  }
 
   if ( !clientOwnsKeyTerminalImage(ti, ev) &&
        typedKeyBinding(ti->bindings, ev, (Graphical)ti) )
