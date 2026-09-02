@@ -319,6 +319,7 @@ term_key_press(T, Key) :-
 button_control(0x1).			% BUTTON_control, src/h/graphics.h
 button_shift(0x2).			% BUTTON_shift, idem
 button_meta(0x4).			% BUTTON_meta, idem
+button_gui(0x8).			% BUTTON_gui (Apple Command), idem
 click_double(0x020000).			% CLICK_TYPE_double, idem
 
 %!  term_foreground_process(+T, -PID) is semidet.
@@ -5965,6 +5966,23 @@ test(control_x_reaches_the_child,
     press(T, ctrl_x),
     key(T, enter),
     assertion(wait_until(marker_on_screen(T, '^X'), 15)).
+
+test(the_copy_keys_never_reach_the_child,
+     [ setup(test_begin(T)),
+       cleanup(stop_foreground(T))
+     ]) :-
+    %  Command-C and Ctrl+Shift-C are the window's own keys.  With
+    %  nothing selected ->copy declines, and the key used to fall
+    %  through to the client: Command-C as a `c' typed into whatever
+    %  was reading, Ctrl+Shift-C as the ^C the keymap makes of it.
+    start_echo_client(T),
+    button_gui(Gui),
+    button_control(Control), button_shift(Shift),
+    CtrlShift is Control \/ Shift,
+    term_typed(T, 0'c, Gui),
+    term_typed(T, 3, CtrlShift),
+    drive(0.2),
+    assertion(client_reads(T, '')).
 
 :- end_tests(terminal_control_keys).
 
