@@ -2490,6 +2490,23 @@ test(the_alternate_screen_gives_back_what_a_fold_hides,
     assertion(marker_on_screen(T, 'l30')),
     assertion(marker_on_screen(T, '?- two.')).
 
+test(a_private_prefix_swallows_its_sequence,
+     [setup(current_test_terminal(T))]) :-
+    %  ECMA-48 reserves 0x3c..0x3f as parameter prefixes, and a
+    %  sequence carrying one means nothing without it.  The kitty
+    %  keyboard protocol uses `<' and `=' where the caret uses a bare
+    %  `u': `CSI < u', which Claude Code writes when it exits, left a
+    %  stray `u' on the screen and `CSI > 5 u' moved the caret.
+    buffer(T, 'A\e[<uB\e[>5uC\e[=1;1uD'),
+    assert_rows(T, ['ABCD']).
+
+test(the_caret_is_saved_and_restored_without_one,
+     [setup(current_test_terminal(T))]) :-
+    %  The other half of the above: a bare `CSI s' / `CSI u' is still
+    %  SCOSC / SCORC.
+    buffer(T, '12345\e[s\rXX\e[uZ'),
+    assert_rows(T, ['XX345Z']).
+
 :- end_tests(terminal_screen).
 
 

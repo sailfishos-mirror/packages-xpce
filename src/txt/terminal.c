@@ -9993,11 +9993,17 @@ rlc_putansi(RlcData b, int chr)
 	  rlc_need_arg(b, 1, 0);
 	  CMD(rlc_set_caret_x(b, b->argv[0]));
 	  break;
-	case 's':
-	  CMD(rlc_save_caret_position(b));
+	case 's':		/* CSI s — save the caret (SCOSC) */
+	  if ( b->csi_private )	/* CSI ? Pm s is XTSAVE */
+	    Dprint_csi(b, chr);
+	  else
+	    CMD(rlc_save_caret_position(b));
 	  break;
-	case 'u':
-	  CMD(rlc_restore_caret_position(b));
+	case 'u':		/* CSI u — restore the caret (SCORC) */
+	  if ( b->csi_private )	/* CSI < u and friends are the kitty */
+	    Dprint_csi(b, chr);	/* keyboard protocol */
+	  else
+	    CMD(rlc_restore_caret_position(b));
 	  break;
 	case 'J':
 	  rlc_need_arg(b, 1, 0);
@@ -10114,8 +10120,18 @@ rlc_putansi(RlcData b, int chr)
 	  b->changed |= CHG_CARET;
 	  break;
 	}
-	case '?':		/* private markers: DEC modes (?) and the */
-	case '>':		/* xterm extensions (>) */
+	/* The parameter prefixes of ECMA-48, 0x3c..0x3f.  A sequence
+	 * carrying one is private and means nothing without it: `?' is
+	 * the DEC modes, `>' the xterm extensions, `<' and `=' the
+	 * kitty keyboard protocol.  Remembering the prefix is what
+	 * keeps `CSI < u', which pops that protocol's flags, from
+	 * being read as the `CSI u' that restores the caret -- and its
+	 * `u' from being printed as text.
+	 */
+	case '<':
+	case '=':
+	case '>':
+	case '?':
 	  b->cmdstat = CMD_DEC_PRIVATE;
 	  b->csi_private = chr;
 	  return;
