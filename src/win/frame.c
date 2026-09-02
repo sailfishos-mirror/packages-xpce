@@ -2028,7 +2028,7 @@ static getdecl get_frame[] =
      NAME_area, "Position on the display"),
   GM(NAME_size, 0, "size", NULL, getSizeFrame,
      NAME_area, "Size on the display"),
-  GM(NAME_image, 1, "image", "[{bitmap,pixmap}]", getImageFrame,
+  GM(NAME_image, 0, "image", NULL, getImageFrame,
      NAME_conversion, "Image with the pixels of the frame"),
   GM(NAME_keyboardFocus, 0, "window", NULL, getKeyboardFocusFrame,
      NAME_focus, "Window for default keyboard input"),

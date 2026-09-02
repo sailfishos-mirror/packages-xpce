@@ -690,8 +690,10 @@ imply X-specific semantics.
 - frame<-closed: -> bool
     `@on` when the frame is iconified, `@off` when it is open.
 
-- frame<-image: [{bitmap,pixmap}] -> image
+- frame<-image: -> image
     Image holding the pixels currently shown by the frame.
+
+    @see window<-image for the pixels of a single window.
 
 - frame<-keyboard_focus: -> window
     Window currently designated to receive keyboard input.

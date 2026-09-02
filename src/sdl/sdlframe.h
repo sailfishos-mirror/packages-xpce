@@ -70,5 +70,6 @@ void ws_frame_cursor(FrameObj fr, CursorObj cursor);
 void ws_status_frame(FrameObj fr, Name status);
 void ws_set_label_frame(FrameObj fr);
 Image ws_image_of_frame(FrameObj fr);
+Image ws_image_of_window(PceWindow sw);
 
 #endif /* RAYFRAME_H */

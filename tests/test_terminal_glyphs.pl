@@ -145,8 +145,7 @@ scan_y(TI, X, Classes) :-
 
 image_of(TI, Img, W, H) :-
     get(TI, window, Win),
-    get(Win, frame, F),
-    get(F, image, Img),
+    get(Win, image, Img),
     get(Img, size, size(W, H)).
 
 class_at(Img, X, Y, Class) :-

@@ -2085,6 +2085,27 @@ getForegroundWindow(PceWindow sw)
 }
 
 
+/* <-image: the pixels of this window, as frame<-image gives those of
+ * the whole frame.  The window must be created: what it answers is a
+ * copy of what is on the screen, and there is none before that.
+ */
+
+static Image
+getImageWindow(PceWindow sw)
+{ if ( ws_created_window(sw) )
+  { Image image = ws_image_of_window(sw);
+
+    if ( image )
+      answer(image);
+
+    fail;
+  }
+
+  errorPce(sw, NAME_mustBeCreatedBefore, NAME_image);
+  fail;
+}
+
+
 		/********************************
 		*            FLUSHING		*
 		********************************/
@@ -2424,6 +2445,8 @@ static getdecl get_window[] =
      DEFAULT, "Tile of window (create if not there)"),
   GM(NAME_foreground, 0, "colour", NULL, getForegroundWindow,
      NAME_appearance, "Get foreground colour"),
+  GM(NAME_image, 0, "image", NULL, getImageWindow,
+     NAME_conversion, "Image with the pixels of the window"),
   GM(NAME_changesArea, 0, "area*", NULL, getChangesAreaWindow,
      NAME_repaint, "AABB of pending damage rectangles, or fail if none"),
   GM(NAME_boundingBox, 0, "area", NULL, getBoundingBoxWindow,

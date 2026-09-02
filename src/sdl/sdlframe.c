@@ -1086,6 +1086,57 @@ composite_window_to_cairo(cairo_t *cr, PceWindow sw,
 
 
 /**
+ * A cairo surface of `pw' x `ph' device pixels to composite an image
+ * of a frame or of a window onto, filled with `background'.  The two
+ * <-image methods differ only in what they put on it and how big it
+ * is; pixel_image_start() and pixel_image_finish() are the rest.
+ *
+ * @return The context to draw on, or NULL if the surface could not be
+ *         created.  `surf' is set to the surface it draws on, which
+ *         pixel_image_finish() hands to the Image.
+ */
+static cairo_t *
+pixel_image_start(cairo_surface_t **surf, int pw, int ph, Any background)
+{ cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, ph);
+
+  if ( !s )
+    return NULL;
+
+  d_init_surface(s, background);
+  cairo_t *cr = cairo_create(s);
+  if ( !cr )
+  { cairo_surface_destroy(s);
+    return NULL;
+  }
+
+  *surf = s;
+  return cr;
+}
+
+/**
+ * Wrap the surface drawn by pixel_image_start() in an xpce Image,
+ * which takes it over.  Destroys the context either way.
+ *
+ * @return The Image, or NULL if it could not be created.
+ */
+static Image
+pixel_image_finish(cairo_surface_t *surf, cairo_t *cr, int pw, int ph)
+{ cairo_destroy(cr);
+
+  Image image = newObject(ClassImage, NIL, EAV);
+  if ( !image )
+  { cairo_surface_destroy(surf);
+    return NULL;
+  }
+  assign(image, kind,    NAME_pixmap);
+  assign(image->size, w, toInt(pw));
+  assign(image->size, h, toInt(ph));
+  image->ws_ref = surf;
+
+  return image;
+}
+
+/**
  * Retrieve the image representation of the specified frame.
  * Composites all window backing cairo surfaces onto a new frame-size
  * cairo surface and wraps it in an xpce Image object.
@@ -1103,27 +1154,55 @@ ws_image_of_frame(FrameObj fr)
   int     fw    = (int)(valInt(fr->area->w) * scale);
   int     fh    = (int)(valInt(fr->area->h) * scale);
 
-  cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, fw, fh);
-  if ( !surf )
+  cairo_surface_t *surf;
+  cairo_t *cr = pixel_image_start(&surf, fw, fh, fr->background);
+  if ( !cr )
     return NULL;
 
-  d_init_surface(surf, fr->background);
-
-  cairo_t *cr = cairo_create(surf);
   Cell cell;
   for_cell(cell, fr->members)
     composite_window_to_cairo(cr, cell->value, 0.0f, 0.0f, scale);
-  cairo_destroy(cr);
 
-  Image image = newObject(ClassImage, NIL, EAV);
-  if ( !image )
-  { cairo_surface_destroy(surf);
+  return pixel_image_finish(surf, cr, fw, fh);
+}
+
+/**
+ * Retrieve the image representation of the specified window: the same
+ * pixels <-image of its frame holds for it, on a surface of the
+ * window's own size and with the window at its origin.  A window
+ * decorator and any subwindows come along, as they do for the frame.
+ *
+ * @param sw Pointer to the PceWindow.
+ * @return Pointer to the Image object representing the window, or NULL
+ *         on failure.
+ */
+Image
+ws_image_of_window(PceWindow sw)
+{ FrameObj fr;
+
+  if ( !ws_created_window(sw) ||
+       !(fr=getFrameWindow(sw, OFF)) ||
+       !ws_created_frame(fr) )
     return NULL;
-  }
-  assign(image, kind,    NAME_pixmap);
-  assign(image->size, w, toInt(fw));
-  assign(image->size, h, toInt(fh));
-  image->ws_ref = surf;
 
-  return image;
+  WsFrame wfr   = fr->ws_ref;
+  float   scale = SDL_GetWindowPixelDensity(wfr->ws_window);
+  int     ww    = (int)(valInt(sw->area->w) * scale);
+  int     wh    = (int)(valInt(sw->area->h) * scale);
+
+  cairo_surface_t *surf;
+  cairo_t *cr = pixel_image_start(&surf, ww, wh, sw->background);
+  if ( !cr )
+    return NULL;
+
+  /* composite_window_to_cairo() places the window at its position in
+   * the frame; the offset below takes that back out, so the window
+   * lands on the origin of a surface of its own size.
+   */
+  composite_window_to_cairo(cr, sw,
+			    -(float)valInt(sw->area->x),
+			    -(float)valInt(sw->area->y),
+			    scale);
+
+  return pixel_image_finish(surf, cr, ww, wh);
 }
