@@ -1297,9 +1297,23 @@ typedTerminalImage(TerminalImage ti, EventObj ev)
   } else if ( ev->id == NAME_DEL )
   { seq = tilde_seq(buf, sizeof(buf), 3, mod);
   } else if ( ev->id == NAME_TAB )
-  { chr = '\t';
-    if ( valInt(ev->buttons) & BUTTON_meta )
-      chr += META_OFFSET;
+  { /* Shift+Tab is the back-tab (CBT), which xterm reports as `CSI Z'
+     * and every client that walks a form backwards reads as that.  A
+     * plain tab is what the shift-less key sends, and what Shift+Tab
+     * used to send: indistinguishable from Tab, so the client only
+     * ever went forwards.
+     */
+    if ( (valInt(ev->buttons) & (BUTTON_shift|BUTTON_meta)) == BUTTON_shift )
+    { if ( mod > 2 )			/* shift and something else */
+	snprintf(buf, sizeof(buf), S_ESC"[1;%dZ", mod);
+      else
+	strcpy(buf, S_ESC"[Z");
+      seq = buf;
+    } else
+    { chr = '\t';
+      if ( valInt(ev->buttons) & BUTTON_meta )
+	chr += META_OFFSET;
+    }
   } else if ( ev->id == NAME_RET )
   { chr = '\r';
     if ( valInt(ev->buttons) & BUTTON_meta )

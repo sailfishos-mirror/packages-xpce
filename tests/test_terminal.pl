@@ -6069,6 +6069,30 @@ test(modified_function_keys,
     hit(T, f7, Shift),
     assertion(client_reads(T, '^[[1;5P^[[18;2~')).
 
+test(shift_tab_is_the_back_tab,
+     [ setup(fkeys_begin(T)),
+       cleanup(stop_foreground(T))
+     ]) :-
+    %  Shift+Tab is the CBT xterm spells `CSI Z'.  It used to send a
+    %  plain tab, leaving a client that walks a form both ways unable
+    %  to tell the two keys apart.
+    button_shift(Shift),
+    button_control(Control),
+    CtrlShift is Control \/ Shift,
+    hit(T, 'TAB', Shift),
+    hit(T, 'TAB', CtrlShift),
+    assertion(client_reads(T, '^[[Z^[[1;6Z')).
+
+test(tab_is_still_a_tab,
+     [ setup(fkeys_begin(T)),
+       cleanup(stop_foreground(T))
+     ]) :-
+    %  The other half: without the shift the key is the tab it always
+    %  was.  `cat -v' leaves a tab alone, so what comes back is the
+    %  screen's own expansion of it -- the first tab stop is column 8.
+    hit(T, 'TAB'),
+    assertion(client_reads(T, '        ')).
+
 test(modified_cursor_keys,
      [ setup(fkeys_begin(T)),
        cleanup(stop_foreground(T))
